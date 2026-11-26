@@ -9,7 +9,7 @@ import std.serial
 import proto
 
 @[derive(Serialize, Deserialize)]
-type Inner = { n: i32, unknown_fields: serial.Bytes }
+type Inner = { n: i32, @[serial(default)] unknown_fields: serial.Bytes }
 
 @[derive(Serialize, Deserialize)]
 type Shape = | Circle(value: i32) | Name(value: String) | Box(value: Inner)
@@ -38,7 +38,7 @@ type Person = {
     scores: Map[String, i32],
     byid: Map[String, Inner],
     shape: Option[Shape],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 fn say(s: String) uses io { io.outln(s.bytes()) }

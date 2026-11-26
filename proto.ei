@@ -999,7 +999,8 @@ fn dec_message(reg: Registry, m: Message, b: List[u8], start: usize, end: usize,
             es.push(serial.Entry(o.name.copy(), serial.VMap(one)))
         }
     }
-    es.push(serial.Entry("unknown_fields".bytes(), serial.VBytes(unknown)))
+    // only when there is something: a hand-written message type without an `unknown_fields` member decodes fine until it meets unknown data
+    if unknown.len() > 0 { es.push(serial.Entry("unknown_fields".bytes(), serial.VBytes(unknown))) }
     Ok(serial.VMap(es))
 }
 
