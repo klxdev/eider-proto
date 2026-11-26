@@ -7,7 +7,7 @@ import proto.tests.session.google_protobuf_descriptor
 @[derive(Serialize, Deserialize)]
 pub type Opts = {
     unique: Option[bool],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_opts(reg: proto.Registry, x: Opts) -> Result[List[u8], serial.Error] { proto.encode(reg, "vtproto.Opts", x) }

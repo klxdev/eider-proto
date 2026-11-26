@@ -6,7 +6,7 @@ import proto
 @[derive(Serialize, Deserialize)]
 pub type BytesMessage = {
     data: serial.Bytes,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_bytes_message(reg: proto.Registry, x: BytesMessage) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.sshforward.v1.BytesMessage", x) }
@@ -22,7 +22,7 @@ fn reg_bytes_message(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type CheckAgentRequest = {
     id: String,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_check_agent_request(reg: proto.Registry, x: CheckAgentRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.sshforward.v1.CheckAgentRequest", x) }
@@ -37,7 +37,7 @@ fn reg_check_agent_request(inout r: proto.Registry) {
 
 @[derive(Serialize, Deserialize)]
 pub type CheckAgentResponse = {
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_check_agent_response(reg: proto.Registry, x: CheckAgentResponse) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.sshforward.v1.CheckAgentResponse", x) }

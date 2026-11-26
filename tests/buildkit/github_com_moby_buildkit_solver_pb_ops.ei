@@ -12,7 +12,7 @@ pub type Op = {
     op: Option[Op_Op],
     platform: Option[Platform],
     constraints: Option[WorkerConstraints],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_op(reg: proto.Registry, x: Op) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.Op", x) }
@@ -35,7 +35,7 @@ pub type Platform = {
     variant: String,
     os_version: String,
     os_features: List[String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_platform(reg: proto.Registry, x: Platform) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.Platform", x) }
@@ -56,7 +56,7 @@ fn reg_platform(inout r: proto.Registry) {
 pub type Input = {
     digest: String,
     index: i64,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_input(reg: proto.Registry, x: Input) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.Input", x) }
@@ -78,7 +78,7 @@ pub type ExecOp = {
     security: i32,
     secretenv: List[SecretEnv],
     cdi_devices: List[CDIDevice],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_exec_op(reg: proto.Registry, x: ExecOp) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.ExecOp", x) }
@@ -109,7 +109,7 @@ pub type Meta = {
     cgroup_parent: String,
     remove_mount_stubs_recursive: bool,
     valid_exit_codes: List[i32],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_meta(reg: proto.Registry, x: Meta) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.Meta", x) }
@@ -136,7 +136,7 @@ fn reg_meta(inout r: proto.Registry) {
 pub type HostIP = {
     host: String,
     ip: String,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_host_ip(reg: proto.Registry, x: HostIP) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.HostIP", x) }
@@ -155,7 +155,7 @@ pub type Ulimit = {
     name: String,
     soft: i64,
     hard: i64,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_ulimit(reg: proto.Registry, x: Ulimit) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.Ulimit", x) }
@@ -175,7 +175,7 @@ pub type SecretEnv = {
     id: String,
     name: String,
     optional: bool,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_secret_env(reg: proto.Registry, x: SecretEnv) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.SecretEnv", x) }
@@ -194,7 +194,7 @@ fn reg_secret_env(inout r: proto.Registry) {
 pub type CDIDevice = {
     name: String,
     optional: bool,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_cdi_device(reg: proto.Registry, x: CDIDevice) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.CDIDevice", x) }
@@ -222,7 +222,7 @@ pub type Mount = {
     ssh_opt: Option[SSHOpt],
     result_id: String,
     content_cache: i32,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_mount(reg: proto.Registry, x: Mount) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.Mount", x) }
@@ -249,7 +249,7 @@ fn reg_mount(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type TmpfsOpt = {
     size: i64,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_tmpfs_opt(reg: proto.Registry, x: TmpfsOpt) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.TmpfsOpt", x) }
@@ -266,7 +266,7 @@ fn reg_tmpfs_opt(inout r: proto.Registry) {
 pub type CacheOpt = {
     id: String,
     sharing: i32,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_cache_opt(reg: proto.Registry, x: CacheOpt) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.CacheOpt", x) }
@@ -287,7 +287,7 @@ pub type SecretOpt = {
     gid: u32,
     mode: u32,
     optional: bool,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_secret_opt(reg: proto.Registry, x: SecretOpt) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.SecretOpt", x) }
@@ -311,7 +311,7 @@ pub type SSHOpt = {
     gid: u32,
     mode: u32,
     optional: bool,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_ssh_opt(reg: proto.Registry, x: SSHOpt) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.SSHOpt", x) }
@@ -332,7 +332,7 @@ fn reg_ssh_opt(inout r: proto.Registry) {
 pub type SourceOp = {
     identifier: String,
     attrs: Map[String, String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_source_op(reg: proto.Registry, x: SourceOp) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.SourceOp", x) }
@@ -352,7 +352,7 @@ pub type BuildOp = {
     inputs: Map[String, BuildInput],
     def: Option[Definition],
     attrs: Map[String, String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_build_op(reg: proto.Registry, x: BuildOp) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.BuildOp", x) }
@@ -371,7 +371,7 @@ fn reg_build_op(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type BuildInput = {
     input: i64,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_build_input(reg: proto.Registry, x: BuildInput) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.BuildInput", x) }
@@ -392,7 +392,7 @@ pub type OpMetadata = {
     caps: Map[String, bool],
     progress_group: Option[ProgressGroup],
     linux_resources: Option[LinuxResources],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_op_metadata(reg: proto.Registry, x: OpMetadata) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.OpMetadata", x) }
@@ -414,7 +414,7 @@ fn reg_op_metadata(inout r: proto.Registry) {
 pub type Source = {
     locations: Map[String, Locations],
     infos: List[SourceInfo],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_source(reg: proto.Registry, x: Source) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.Source", x) }
@@ -431,7 +431,7 @@ fn reg_source(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type Locations = {
     locations: List[Location],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_locations(reg: proto.Registry, x: Locations) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.Locations", x) }
@@ -450,7 +450,7 @@ pub type SourceInfo = {
     data: serial.Bytes,
     definition: Option[Definition],
     language: String,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_source_info(reg: proto.Registry, x: SourceInfo) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.SourceInfo", x) }
@@ -470,7 +470,7 @@ fn reg_source_info(inout r: proto.Registry) {
 pub type Location = {
     source_index: i32,
     ranges: List[Range],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_location(reg: proto.Registry, x: Location) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.Location", x) }
@@ -488,7 +488,7 @@ fn reg_location(inout r: proto.Registry) {
 pub type Range = {
     start: Option[Position],
     end: Option[Position],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_range(reg: proto.Registry, x: Range) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.Range", x) }
@@ -506,7 +506,7 @@ fn reg_range(inout r: proto.Registry) {
 pub type Position = {
     line: i32,
     character: i32,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_position(reg: proto.Registry, x: Position) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.Position", x) }
@@ -523,7 +523,7 @@ fn reg_position(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type ExportCache = {
     value: bool,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_export_cache(reg: proto.Registry, x: ExportCache) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.ExportCache", x) }
@@ -541,7 +541,7 @@ pub type ProgressGroup = {
     id: String,
     name: String,
     weak: bool,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_progress_group(reg: proto.Registry, x: ProgressGroup) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.ProgressGroup", x) }
@@ -565,7 +565,7 @@ pub type LinuxResources = {
     cpu_quota: i64,
     cpuset_cpus: String,
     cpuset_mems: String,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_linux_resources(reg: proto.Registry, x: LinuxResources) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.LinuxResources", x) }
@@ -591,7 +591,7 @@ pub type ProxyEnv = {
     ftp_proxy: String,
     no_proxy: String,
     all_proxy: String,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_proxy_env(reg: proto.Registry, x: ProxyEnv) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.ProxyEnv", x) }
@@ -611,7 +611,7 @@ fn reg_proxy_env(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type WorkerConstraints = {
     filter: List[String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_worker_constraints(reg: proto.Registry, x: WorkerConstraints) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.WorkerConstraints", x) }
@@ -629,7 +629,7 @@ pub type Definition = {
     def: List[serial.Bytes],
     metadata: Map[String, OpMetadata],
     source: Option[Source],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_definition(reg: proto.Registry, x: Definition) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.Definition", x) }
@@ -647,7 +647,7 @@ fn reg_definition(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type FileOp = {
     actions: List[FileAction],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_file_op(reg: proto.Registry, x: FileOp) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.FileOp", x) }
@@ -669,7 +669,7 @@ pub type FileAction = {
     secondary_input: i64,
     output: i64,
     action: Option[FileAction_Action],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_file_action(reg: proto.Registry, x: FileAction) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.FileAction", x) }
@@ -703,7 +703,7 @@ pub type FileActionCopy = {
     always_replace_existing_dest_paths: bool,
     mode_str: String,
     required_paths: List[String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_file_action_copy(reg: proto.Registry, x: FileActionCopy) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.FileActionCopy", x) }
@@ -738,7 +738,7 @@ pub type FileActionMkFile = {
     data: serial.Bytes,
     owner: Option[ChownOpt],
     timestamp: i64,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_file_action_mk_file(reg: proto.Registry, x: FileActionMkFile) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.FileActionMkFile", x) }
@@ -761,7 +761,7 @@ pub type FileActionSymlink = {
     newpath: String,
     owner: Option[ChownOpt],
     timestamp: i64,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_file_action_symlink(reg: proto.Registry, x: FileActionSymlink) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.FileActionSymlink", x) }
@@ -784,7 +784,7 @@ pub type FileActionMkDir = {
     make_parents: bool,
     owner: Option[ChownOpt],
     timestamp: i64,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_file_action_mk_dir(reg: proto.Registry, x: FileActionMkDir) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.FileActionMkDir", x) }
@@ -806,7 +806,7 @@ pub type FileActionRm = {
     path: String,
     allow_not_found: bool,
     allow_wildcard: bool,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_file_action_rm(reg: proto.Registry, x: FileActionRm) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.FileActionRm", x) }
@@ -825,7 +825,7 @@ fn reg_file_action_rm(inout r: proto.Registry) {
 pub type ChownOpt = {
     user: Option[UserOpt],
     group: Option[UserOpt],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_chown_opt(reg: proto.Registry, x: ChownOpt) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.ChownOpt", x) }
@@ -845,7 +845,7 @@ pub type UserOpt_User = | ByName(value: NamedUserOpt) | ByID(value: u32)
 @[derive(Serialize, Deserialize)]
 pub type UserOpt = {
     user: Option[UserOpt_User],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_user_opt(reg: proto.Registry, x: UserOpt) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.UserOpt", x) }
@@ -862,7 +862,7 @@ fn reg_user_opt(inout r: proto.Registry) {
 pub type NamedUserOpt = {
     name: String,
     input: i64,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_named_user_opt(reg: proto.Registry, x: NamedUserOpt) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.NamedUserOpt", x) }
@@ -879,7 +879,7 @@ fn reg_named_user_opt(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type MergeInput = {
     input: i64,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_merge_input(reg: proto.Registry, x: MergeInput) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.MergeInput", x) }
@@ -895,7 +895,7 @@ fn reg_merge_input(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type MergeOp = {
     inputs: List[MergeInput],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_merge_op(reg: proto.Registry, x: MergeOp) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.MergeOp", x) }
@@ -911,7 +911,7 @@ fn reg_merge_op(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type LowerDiffInput = {
     input: i64,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_lower_diff_input(reg: proto.Registry, x: LowerDiffInput) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.LowerDiffInput", x) }
@@ -927,7 +927,7 @@ fn reg_lower_diff_input(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type UpperDiffInput = {
     input: i64,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_upper_diff_input(reg: proto.Registry, x: UpperDiffInput) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.UpperDiffInput", x) }
@@ -944,7 +944,7 @@ fn reg_upper_diff_input(inout r: proto.Registry) {
 pub type DiffOp = {
     lower: Option[LowerDiffInput],
     upper: Option[UpperDiffInput],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_diff_op(reg: proto.Registry, x: DiffOp) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.DiffOp", x) }
@@ -962,7 +962,7 @@ fn reg_diff_op(inout r: proto.Registry) {
 pub type PassthroughOp = {
     id: String,
     outputs: List[i64],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_passthrough_op(reg: proto.Registry, x: PassthroughOp) -> Result[List[u8], serial.Error] { proto.encode(reg, "pb.PassthroughOp", x) }

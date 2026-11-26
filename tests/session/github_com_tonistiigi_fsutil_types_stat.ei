@@ -16,7 +16,7 @@ pub type Stat = {
     devmajor: i64,
     devminor: i64,
     xattrs: Map[String, serial.Bytes],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_stat(reg: proto.Registry, x: Stat) -> Result[List[u8], serial.Error] { proto.encode(reg, "fsutil.types.Stat", x) }

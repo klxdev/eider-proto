@@ -12,7 +12,7 @@ pub type WorkerRecord = {
     gc_policy: List[GCPolicy],
     buildkit_version: Option[BuildkitVersion],
     cdi_devices: List[CDIDevice],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_worker_record(reg: proto.Registry, x: WorkerRecord) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.types.WorkerRecord", x) }
@@ -38,7 +38,7 @@ pub type GCPolicy = {
     reserved_space: i64,
     max_used_space: i64,
     min_free_space: i64,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_gc_policy(reg: proto.Registry, x: GCPolicy) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.types.GCPolicy", x) }
@@ -62,7 +62,7 @@ pub type BuildkitVersion = {
     version: String,
     revision: String,
     dockerfile_version: String,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_buildkit_version(reg: proto.Registry, x: BuildkitVersion) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.types.BuildkitVersion", x) }
@@ -84,7 +84,7 @@ pub type CDIDevice = {
     auto_allow: bool,
     annotations: Map[String, String],
     on_demand: bool,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_cdi_device(reg: proto.Registry, x: CDIDevice) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.types.CDIDevice", x) }

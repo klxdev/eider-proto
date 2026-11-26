@@ -7,7 +7,7 @@ import proto
 pub type FindExportersRequest = {
     metadata: Map[String, serial.Bytes],
     refs: List[String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_find_exporters_request(reg: proto.Registry, x: FindExportersRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.exporter.v1.FindExportersRequest", x) }
@@ -24,7 +24,7 @@ fn reg_find_exporters_request(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type FindExportersResponse = {
     exporters: List[ExporterRequest],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_find_exporters_response(reg: proto.Registry, x: FindExportersResponse) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.exporter.v1.FindExportersResponse", x) }
@@ -41,7 +41,7 @@ fn reg_find_exporters_response(inout r: proto.Registry) {
 pub type ExporterRequest = {
     type_: String,
     attrs: Map[String, String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_exporter_request(reg: proto.Registry, x: ExporterRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.exporter.v1.ExporterRequest", x) }
@@ -58,7 +58,7 @@ fn reg_exporter_request(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type FinalizeExportRequest = {
     exporter_response: Map[String, String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_finalize_export_request(reg: proto.Registry, x: FinalizeExportRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.exporter.v1.FinalizeExportRequest", x) }
@@ -73,7 +73,7 @@ fn reg_finalize_export_request(inout r: proto.Registry) {
 
 @[derive(Serialize, Deserialize)]
 pub type FinalizeExportResponse = {
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_finalize_export_response(reg: proto.Registry, x: FinalizeExportResponse) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.exporter.v1.FinalizeExportResponse", x) }

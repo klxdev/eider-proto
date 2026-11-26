@@ -6,7 +6,7 @@ import proto
 @[derive(Serialize, Deserialize)]
 pub type BytesMessage = {
     data: serial.Bytes,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_bytes_message(reg: proto.Registry, x: BytesMessage) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.upload.v1.BytesMessage", x) }

@@ -11,7 +11,7 @@ pub type Packet = {
     stat: Option[github_com_tonistiigi_fsutil_types_stat.Stat],
     id: u32,
     data: serial.Bytes,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_packet(reg: proto.Registry, x: Packet) -> Result[List[u8], serial.Error] { proto.encode(reg, "fsutil.types.Packet", x) }

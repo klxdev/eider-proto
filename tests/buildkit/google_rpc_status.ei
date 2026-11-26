@@ -9,7 +9,7 @@ pub type Status = {
     code: i32,
     message: String,
     details: List[google_protobuf_any.Any],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_status(reg: proto.Registry, x: Status) -> Result[List[u8], serial.Error] { proto.encode(reg, "google.rpc.Status", x) }

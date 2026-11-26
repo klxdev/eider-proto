@@ -7,7 +7,7 @@ import proto
 pub type Timestamp = {
     seconds: i64,
     nanos: i32,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_timestamp(reg: proto.Registry, x: Timestamp) -> Result[List[u8], serial.Error] { proto.encode(reg, "google.protobuf.Timestamp", x) }

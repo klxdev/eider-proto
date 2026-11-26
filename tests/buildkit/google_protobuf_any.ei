@@ -7,7 +7,7 @@ import proto
 pub type Any = {
     type_url: String,
     value: serial.Bytes,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_any(reg: proto.Registry, x: Any) -> Result[List[u8], serial.Error] { proto.encode(reg, "google.protobuf.Any", x) }

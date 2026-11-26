@@ -6,7 +6,7 @@ import proto
 @[derive(Serialize, Deserialize)]
 pub type CredentialsRequest = {
     host: String,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_credentials_request(reg: proto.Registry, x: CredentialsRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.filesync.v1.CredentialsRequest", x) }
@@ -23,7 +23,7 @@ fn reg_credentials_request(inout r: proto.Registry) {
 pub type CredentialsResponse = {
     username: String,
     secret: String,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_credentials_response(reg: proto.Registry, x: CredentialsResponse) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.filesync.v1.CredentialsResponse", x) }
@@ -44,7 +44,7 @@ pub type FetchTokenRequest = {
     realm: String,
     service: String,
     scopes: List[String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_fetch_token_request(reg: proto.Registry, x: FetchTokenRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.filesync.v1.FetchTokenRequest", x) }
@@ -66,7 +66,7 @@ pub type FetchTokenResponse = {
     token: String,
     expires_in: i64,
     issued_at: i64,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_fetch_token_response(reg: proto.Registry, x: FetchTokenResponse) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.filesync.v1.FetchTokenResponse", x) }
@@ -85,7 +85,7 @@ fn reg_fetch_token_response(inout r: proto.Registry) {
 pub type GetTokenAuthorityRequest = {
     host: String,
     salt: serial.Bytes,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_get_token_authority_request(reg: proto.Registry, x: GetTokenAuthorityRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.filesync.v1.GetTokenAuthorityRequest", x) }
@@ -102,7 +102,7 @@ fn reg_get_token_authority_request(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type GetTokenAuthorityResponse = {
     public_key: serial.Bytes,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_get_token_authority_response(reg: proto.Registry, x: GetTokenAuthorityResponse) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.filesync.v1.GetTokenAuthorityResponse", x) }
@@ -120,7 +120,7 @@ pub type VerifyTokenAuthorityRequest = {
     host: String,
     payload: serial.Bytes,
     salt: serial.Bytes,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_verify_token_authority_request(reg: proto.Registry, x: VerifyTokenAuthorityRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.filesync.v1.VerifyTokenAuthorityRequest", x) }
@@ -138,7 +138,7 @@ fn reg_verify_token_authority_request(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type VerifyTokenAuthorityResponse = {
     signed: serial.Bytes,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_verify_token_authority_response(reg: proto.Registry, x: VerifyTokenAuthorityResponse) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.filesync.v1.VerifyTokenAuthorityResponse", x) }

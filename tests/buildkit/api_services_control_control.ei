@@ -16,7 +16,7 @@ pub type PruneRequest = {
     reserved_space: i64,
     max_used_space: i64,
     min_free_space: i64,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_prune_request(reg: proto.Registry, x: PruneRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.PruneRequest", x) }
@@ -38,7 +38,7 @@ fn reg_prune_request(inout r: proto.Registry) {
 pub type DiskUsageRequest = {
     filter: List[String],
     age_limit: i64,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_disk_usage_request(reg: proto.Registry, x: DiskUsageRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.DiskUsageRequest", x) }
@@ -55,7 +55,7 @@ fn reg_disk_usage_request(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type DiskUsageResponse = {
     record: List[UsageRecord],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_disk_usage_response(reg: proto.Registry, x: DiskUsageResponse) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.DiskUsageResponse", x) }
@@ -82,7 +82,7 @@ pub type UsageRecord = {
     record_type: String,
     shared: bool,
     parents: List[String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_usage_record(reg: proto.Registry, x: UsageRecord) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.UsageRecord", x) }
@@ -125,7 +125,7 @@ pub type SolveRequest = {
     source_policy_session: String,
     compatibility_version: i64,
     proxy_network: bool,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_solve_request(reg: proto.Registry, x: SolveRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.SolveRequest", x) }
@@ -161,7 +161,7 @@ pub type CacheOptions = {
     export_attrs_deprecated: Map[String, String],
     exports: List[CacheOptionsEntry],
     imports: List[CacheOptionsEntry],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_cache_options(reg: proto.Registry, x: CacheOptions) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.CacheOptions", x) }
@@ -182,7 +182,7 @@ fn reg_cache_options(inout r: proto.Registry) {
 pub type CacheOptionsEntry = {
     type_: String,
     attrs: Map[String, String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_cache_options_entry(reg: proto.Registry, x: CacheOptionsEntry) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.CacheOptionsEntry", x) }
@@ -199,7 +199,7 @@ fn reg_cache_options_entry(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type SolveResponse = {
     exporter_response: Map[String, String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_solve_response(reg: proto.Registry, x: SolveResponse) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.SolveResponse", x) }
@@ -215,7 +215,7 @@ fn reg_solve_response(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type StatusRequest = {
     ref_: String,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_status_request(reg: proto.Registry, x: StatusRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.StatusRequest", x) }
@@ -234,7 +234,7 @@ pub type StatusResponse = {
     statuses: List[VertexStatus],
     logs: List[VertexLog],
     warnings: List[VertexWarning],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_status_response(reg: proto.Registry, x: StatusResponse) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.StatusResponse", x) }
@@ -260,7 +260,7 @@ pub type Vertex = {
     completed: Option[google_protobuf_timestamp.Timestamp],
     error: String,
     progress_group: Option[github_com_moby_buildkit_solver_pb_ops.ProgressGroup],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_vertex(reg: proto.Registry, x: Vertex) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.Vertex", x) }
@@ -290,7 +290,7 @@ pub type VertexStatus = {
     timestamp: Option[google_protobuf_timestamp.Timestamp],
     started: Option[google_protobuf_timestamp.Timestamp],
     completed: Option[google_protobuf_timestamp.Timestamp],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_vertex_status(reg: proto.Registry, x: VertexStatus) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.VertexStatus", x) }
@@ -316,7 +316,7 @@ pub type VertexLog = {
     timestamp: Option[google_protobuf_timestamp.Timestamp],
     stream: i64,
     msg: serial.Bytes,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_vertex_log(reg: proto.Registry, x: VertexLog) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.VertexLog", x) }
@@ -341,7 +341,7 @@ pub type VertexWarning = {
     url: String,
     info: Option[github_com_moby_buildkit_solver_pb_ops.SourceInfo],
     ranges: List[github_com_moby_buildkit_solver_pb_ops.Range],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_vertex_warning(reg: proto.Registry, x: VertexWarning) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.VertexWarning", x) }
@@ -363,7 +363,7 @@ fn reg_vertex_warning(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type BytesMessage = {
     data: serial.Bytes,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_bytes_message(reg: proto.Registry, x: BytesMessage) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.BytesMessage", x) }
@@ -379,7 +379,7 @@ fn reg_bytes_message(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type ListWorkersRequest = {
     filter: List[String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_list_workers_request(reg: proto.Registry, x: ListWorkersRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.ListWorkersRequest", x) }
@@ -395,7 +395,7 @@ fn reg_list_workers_request(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type ListWorkersResponse = {
     record: List[github_com_moby_buildkit_api_types_worker.WorkerRecord],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_list_workers_response(reg: proto.Registry, x: ListWorkersResponse) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.ListWorkersResponse", x) }
@@ -410,7 +410,7 @@ fn reg_list_workers_response(inout r: proto.Registry) {
 
 @[derive(Serialize, Deserialize)]
 pub type InfoRequest = {
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_info_request(reg: proto.Registry, x: InfoRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.InfoRequest", x) }
@@ -425,7 +425,7 @@ fn reg_info_request(inout r: proto.Registry) {
 @[derive(Serialize, Deserialize)]
 pub type InfoResponse = {
     buildkit_version: Option[github_com_moby_buildkit_api_types_worker.BuildkitVersion],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_info_response(reg: proto.Registry, x: InfoResponse) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.InfoResponse", x) }
@@ -445,7 +445,7 @@ pub type BuildHistoryRequest = {
     early_exit: bool,
     filter: List[String],
     limit: i32,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_build_history_request(reg: proto.Registry, x: BuildHistoryRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.BuildHistoryRequest", x) }
@@ -466,7 +466,7 @@ fn reg_build_history_request(inout r: proto.Registry) {
 pub type BuildHistoryEvent = {
     type_: i32,
     record: Option[BuildHistoryRecord],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_build_history_event(reg: proto.Registry, x: BuildHistoryEvent) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.BuildHistoryEvent", x) }
@@ -501,7 +501,7 @@ pub type BuildHistoryRecord = {
     num_completed_steps: i32,
     external_error: Option[Descriptor],
     num_warnings: i32,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_build_history_record(reg: proto.Registry, x: BuildHistoryRecord) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.BuildHistoryRecord", x) }
@@ -538,7 +538,7 @@ pub type UpdateBuildHistoryRequest = {
     pinned: bool,
     delete: bool,
     finalize: bool,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_update_build_history_request(reg: proto.Registry, x: UpdateBuildHistoryRequest) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.UpdateBuildHistoryRequest", x) }
@@ -556,7 +556,7 @@ fn reg_update_build_history_request(inout r: proto.Registry) {
 
 @[derive(Serialize, Deserialize)]
 pub type UpdateBuildHistoryResponse = {
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_update_build_history_response(reg: proto.Registry, x: UpdateBuildHistoryResponse) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.UpdateBuildHistoryResponse", x) }
@@ -574,7 +574,7 @@ pub type Descriptor = {
     digest: String,
     size: i64,
     annotations: Map[String, String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_descriptor(reg: proto.Registry, x: Descriptor) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.Descriptor", x) }
@@ -595,7 +595,7 @@ pub type BuildResultInfo = {
     result_deprecated: Option[Descriptor],
     attestations: List[Descriptor],
     results: Map[String, Descriptor],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_build_result_info(reg: proto.Registry, x: BuildResultInfo) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.BuildResultInfo", x) }
@@ -614,7 +614,7 @@ fn reg_build_result_info(inout r: proto.Registry) {
 pub type Exporter = {
     type_: String,
     attrs: Map[String, String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_exporter(reg: proto.Registry, x: Exporter) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.Exporter", x) }

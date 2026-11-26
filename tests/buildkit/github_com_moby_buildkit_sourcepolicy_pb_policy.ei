@@ -8,7 +8,7 @@ pub type Rule = {
     action: i32,
     selector: Option[Selector],
     updates: Option[Update],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_rule(reg: proto.Registry, x: Rule) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.sourcepolicy.Rule", x) }
@@ -27,7 +27,7 @@ fn reg_rule(inout r: proto.Registry) {
 pub type Update = {
     identifier: String,
     attrs: Map[String, String],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_update(reg: proto.Registry, x: Update) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.sourcepolicy.Update", x) }
@@ -46,7 +46,7 @@ pub type Selector = {
     identifier: String,
     match_type: i32,
     constraints: List[AttrConstraint],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_selector(reg: proto.Registry, x: Selector) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.sourcepolicy.Selector", x) }
@@ -66,7 +66,7 @@ pub type AttrConstraint = {
     key: String,
     value: String,
     condition: i32,
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_attr_constraint(reg: proto.Registry, x: AttrConstraint) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.sourcepolicy.AttrConstraint", x) }
@@ -85,7 +85,7 @@ fn reg_attr_constraint(inout r: proto.Registry) {
 pub type Policy = {
     version: i64,
     rules: List[Rule],
-    unknown_fields: serial.Bytes,
+    @[serial(default)] unknown_fields: serial.Bytes,
 }
 
 pub fn encode_policy(reg: proto.Registry, x: Policy) -> Result[List[u8], serial.Error] { proto.encode(reg, "moby.buildkit.v1.sourcepolicy.Policy", x) }
