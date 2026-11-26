@@ -222,6 +222,16 @@ fn resolve_ty(c: Ctx, t: String, scope: String, fname: String) -> Result[Ty, Str
 
 fn sq(s: String) -> String { cat(cat(String.from("String.from(\""), s), "\")") }
 
+/// The enum variant of a oneof member: its field name in PascalCase, with `Case` added when that is the name of a message or enum (a
+/// variant and a type of one name would be the same constructor).
+fn vname(c: Ctx, field: String) -> String {
+    let v = pascal(field)
+    for s in c.syms.values() {
+        if s.eider == v { return cat(v, "Case") }
+    }
+    v
+}
+
 fn q(s: String) -> String { cat(cat(String.from("\""), s), "\"") }
 
 fn gen_message(c: Ctx, m: parser.Message, scope: String, ename: String, inout text: String, inout reg: String) -> Result[(), String] {
@@ -236,7 +246,7 @@ fn gen_message(c: Ctx, m: parser.Message, scope: String, ename: String, inout te
         for f in m.fields {
             if f.oneof == on {
                 let t = resolve_ty(c, f.typ.copy(), full.copy(), f.name.copy())?
-                members.push(cat(cat(cat(cat(String.from(" | "), pascal(f.name.copy())), "(value: "), t.eider), ")"))
+                members.push(cat(cat(cat(cat(String.from(" | "), vname(c, f.name.copy())), "(value: "), t.eider), ")"))
             }
         }
         for x in members { text.append(x) }
@@ -272,7 +282,7 @@ fn gen_message(c: Ctx, m: parser.Message, scope: String, ename: String, inout te
                         mem.push_str("proto.member(")
                         mem.append(g.num.to_string())
                         mem.push_str(", ")
-                        mem.append(q(pascal(g.name.copy())))
+                        mem.append(q(vname(c, g.name.copy())))
                         mem.push_str(", proto.")
                         mem.append(t.kind.copy())
                         mem.push_str(", ")
