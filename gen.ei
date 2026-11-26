@@ -540,12 +540,13 @@ pub fn generate(files: List[parser.File], opt: Options) -> Result[List[Out], Str
     Ok(out)
 }
 
-fn index_messages(scope: String, ms: List[parser.Message], inout idx: Map[String, parser.Message]) {
+fn index_messages(scope: String, ms: List[parser.Message], inout idx: Map[String, parser.Message], inout order: List[String]) {
     for m in ms {
         let full = cat(cat(scope.copy(), "."), m.name.copy())
         let key = if scope.len() > 0 { full } else { m.name.copy() }
         idx.insert(key.copy(), m.copy())
-        index_messages(key, m.messages.copy(), inout idx)
+        order.push(key.copy())
+        index_messages(key, m.messages.copy(), inout idx, inout order)
     }
 }
 
@@ -598,9 +599,10 @@ fn dfs_cycle(syms: Map[String, Sym], idx: Map[String, parser.Message], name: Str
 
 fn check_cycles(syms: Map[String, Sym], files: List[parser.File]) -> Result[(), String] {
     let mut idx: Map[String, parser.Message] = Map.new()
-    for f in files { index_messages(f.package.copy(), f.messages.copy(), inout idx) }
+    let mut order: List[String] = List.new()
+    for f in files { index_messages(f.package.copy(), f.messages.copy(), inout idx, inout order) }
     let mut done: List[String] = List.new()
-    for name in idx.keys() {
+    for name in order {
         let mut stack: List[String] = List.new()
         dfs_cycle(syms.copy(), idx.copy(), name, inout stack, inout done)?
     }
