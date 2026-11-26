@@ -1,6 +1,6 @@
 // A command line over proto/gen: Eider modules from .proto files.
 //
-//   eider run tools/protoc_eider.ei <out dir> <include dir> <strip prefix|-> <prefix package|-> <root.proto>...
+//   eider run examples/protoc/protoc_eider.ei <out dir> <include dir> <strip prefix|-> <prefix package|-> <root.proto>...
 //
 // Every file a root imports is found under the include dir (an import path with <strip prefix> removed), and a module is
 // written to the out dir for each file (names: proto/gen's, `google/protobuf/...` from proto/wkt). `prefix package` is
