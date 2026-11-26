@@ -355,7 +355,7 @@ fn gen_message(c: Ctx, m: parser.Message, scope: String, ename: String, inout te
         }
         text.push_str(",\n")
     }
-    text.push_str("    unknown_fields: serial.Bytes,\n}}\n\n")
+    text.push_str("    @[serial(default)] unknown_fields: serial.Bytes,\n}}\n\n")
     // convenience: encode and decode
     let lower = snake(ename.copy())
     text.push_str("pub fn encode_")
@@ -531,4 +531,53 @@ pub fn load_all(roots: List[String], load: fn(String) -> Option[List[u8]]) -> Re
     let mut visiting: List[String] = List.new()
     for r in roots { load_one(r.copy(), load, inout done, inout visiting)? }
     Ok(done)
+}
+
+
+// ---- for generators of services (eider-rpc's rpc/gen) ----
+
+/// A message type as a generator of service stubs needs it: the module `modname` that `generate` wrote it in, its Eider type
+/// name there, and its full protobuf name (`pkg.Message`).
+pub type TypeRef = { modname: String, eider: String, full: String }
+
+/// Resolves type names in the services of `files` the way `generate` resolved them in the messages.
+pub type Resolver = { syms: Map[String, Sym], opt: Options }
+
+pub fn resolver(files: List[parser.File], opt: Options) -> Resolver {
+    let mut syms: Map[String, Sym] = Map.new()
+    for f in files {
+        let mn = module_of(f.path.copy(), opt.clone_options())
+        collect(inout syms, f.package.copy(), f.package.copy(), String.from(""), f.messages.copy(), f.enums.copy(), mn)
+    }
+    Resolver(syms, opt.clone_options())
+}
+
+impl Resolver {
+    /// The message `ref_` (as written in an rpc: `Request`, `pkg.Other`) seen from package `pkg`.
+    fn message(self, pkg: String, ref_: String) -> Result[TypeRef, String] {
+        match resolve(self.syms.copy(), ref_.copy(), pkg) {
+            Some(s) => {
+                if s.is_enum { return Err(cat(String.from("an rpc type that is an enum: "), ref_)) }
+                Ok(TypeRef(s.modname.copy(), s.eider.copy(), s.full.copy()))
+            }
+            None => Err(cat(String.from("unknown type "), ref_))
+        }
+    }
+
+    fn module_of_path(self, path: String) -> String { module_of(path, self.opt.clone_options()) }
+}
+
+/// The snake_case form of a name (`DiskUsage` is `disk_usage`; a reserved word gets a `_`).
+pub fn snake_case(s: String) -> String { snake(s) }
+
+/// `disk_usage` or `DiskUsage` as `DiskUsage` (a type name).
+pub fn pascal_case(s: String) -> String { pascal(s) }
+
+impl Resolver {
+    fn clone_resolver(self) -> Resolver { Resolver(self.syms.copy(), self.opt.clone_options()) }
+}
+
+impl Options {
+    /// A copy (the options of `generate`, for generators that take them too).
+    fn copy_options(self) -> Options { self.clone_options() }
 }
