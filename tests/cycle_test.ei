@@ -1,0 +1,30 @@
+// A message that contains itself by value (directly, through a field, through a oneof, or through another message) is refused by the
+// generator with the cycle named; one that holds itself in a repeated field or a map is fine (those are on the heap).
+
+import std.io
+import proto.parser
+import proto.gen
+
+fn say(s: String) uses io { io.outln(s.bytes()) }
+
+fn main() uses io {
+    let cases = List[
+        r#"syntax = "proto3"; package p; message A { A next = 1; }"#,
+        r#"syntax = "proto3"; package p; message A { B b = 1; } message B { C c = 1; } message C { A a = 1; }"#,
+        r#"syntax = "proto3"; package p; message A { oneof k { A inner = 1; int32 n = 2; } }"#,
+        r#"syntax = "proto3"; package p; message A { message B { A up = 1; } B b = 1; }"#,
+        r#"syntax = "proto3"; package p; message A { repeated A kids = 1; }"#,
+        r#"syntax = "proto3"; package p; message A { map<string, A> by_name = 1; }"#,
+        r#"syntax = "proto3"; package p; message A { B b = 1; } message B { int32 x = 1; }"#]
+    for src in cases {
+        match parser.parse(String.from("c.proto"), src.bytes()) {
+            Ok(f) => {
+                match gen.generate(List[f], gen.options()) {
+                    Ok(o) => { say(String.from("generated")) }
+                    Err(e) => { say(e) }
+                }
+            }
+            Err(e) => { say(e) }
+        }
+    }
+}

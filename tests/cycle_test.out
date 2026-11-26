@@ -1,0 +1,7 @@
+message p.A contains itself by value (p.A -> p.A): an Eider record cannot contain itself, and std/serial cannot yet derive Box[T] (eider-lang#249), so recursive messages are not supported yet
+message p.A contains itself by value (p.A -> p.B -> p.C -> p.A): an Eider record cannot contain itself, and std/serial cannot yet derive Box[T] (eider-lang#249), so recursive messages are not supported yet
+message p.A contains itself by value (p.A -> p.A): an Eider record cannot contain itself, and std/serial cannot yet derive Box[T] (eider-lang#249), so recursive messages are not supported yet
+message p.A.B contains itself by value (p.A.B -> p.A -> p.A.B): an Eider record cannot contain itself, and std/serial cannot yet derive Box[T] (eider-lang#249), so recursive messages are not supported yet
+generated
+generated
+generated
