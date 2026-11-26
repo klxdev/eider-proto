@@ -184,6 +184,10 @@ pub type Oneof = { name: List[u8], variants: List[Field] }
 /// A message type: its full name (`pkg.Outer.Inner`), its fields and its oneofs.
 pub type Message = { name: List[u8], fields: List[Field], oneofs: List[Oneof] }
 
+/// What reflection needs to know of a `.proto` file: its name, the files it imports, the serialized `FileDescriptorProto`, and the full names
+/// of what it defines (messages, enums, services, and their methods as `pkg.Service.Method`), for `file_containing_symbol`.
+pub type FileDesc = { name: String, deps: List[String], data: List[u8], symbols: List[String] }
+
 /// A set of messages by full name.
 pub type Registry = { msgs: Map[String, Message] }
 

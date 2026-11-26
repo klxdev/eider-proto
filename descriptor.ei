@@ -1,0 +1,232 @@
+//! proto/descriptor: the serialized `FileDescriptorProto` (descriptor.proto) of a parsed `.proto` file, which is what gRPC server reflection
+//! hands to tools such as grpcurl so that they can describe and call a service without the `.proto` files. It is built from the
+//! syntax tree (`proto/parser`) with the wire primitives of `proto`: names, numbers, labels, types and type names (fully qualified, with a
+//! leading dot), oneofs, `optional` (a synthetic oneof and `proto3_optional`), maps (a nested `...Entry` message with `map_entry`), enums, services
+//! and methods with their streaming flags, and `json_name`. Source info, options and comments are not included. `proto/gen` writes it
+//! into the generated modules (`file_desc()`).
+
+import std.bytes
+import proto
+import proto.parser
+
+fn put_str(inout out: List[u8], num: u32, s: String) {
+    proto.put_tag(inout out, num, proto.WT_LEN)
+    let b = s.bytes()
+    proto.put_varint(inout out, b.len() as u64)
+    out.extend(b)
+}
+
+fn put_msg(inout out: List[u8], num: u32, m: List[u8]) {
+    proto.put_tag(inout out, num, proto.WT_LEN)
+    proto.put_varint(inout out, m.len() as u64)
+    out.extend(m)
+}
+
+fn put_int(inout out: List[u8], num: u32, v: i64) {
+    proto.put_tag(inout out, num, proto.WT_VARINT)
+    proto.put_varint(inout out, proto.bits64(v))
+}
+
+fn put_bool(inout out: List[u8], num: u32, v: bool) {
+    proto.put_tag(inout out, num, proto.WT_VARINT)
+    out.push(if v { 1 } else { 0 })
+}
+
+/// What the generator knows about a type name: whether it is an enum, and its full name (no leading dot).
+pub type Resolved = { is_enum: bool, full: String }
+
+fn scalar_type(t: String) -> i32 {
+    if t == String.from("double") { return 1 }
+    if t == String.from("float") { return 2 }
+    if t == String.from("int64") { return 3 }
+    if t == String.from("uint64") { return 4 }
+    if t == String.from("int32") { return 5 }
+    if t == String.from("fixed64") { return 6 }
+    if t == String.from("fixed32") { return 7 }
+    if t == String.from("bool") { return 8 }
+    if t == String.from("string") { return 9 }
+    if t == String.from("bytes") { return 12 }
+    if t == String.from("uint32") { return 13 }
+    if t == String.from("sfixed32") { return 15 }
+    if t == String.from("sfixed64") { return 16 }
+    if t == String.from("sint32") { return 17 }
+    if t == String.from("sint64") { return 18 }
+    0
+}
+
+/// `foo_bar` as `fooBar` (protoc's json_name).
+fn json_name(n: String) -> String {
+    let b = n.bytes()
+    let mut out: List[u8] = List.new()
+    let mut up = false
+    for c in b {
+        if c == 95 {
+            up = true
+        } else if up {
+            out.push(if c >= 97 && c <= 122 { c - 32 } else { c })
+            up = false
+        } else {
+            out.push(c)
+        }
+    }
+    String.from_bytes(out).unwrap()
+}
+
+fn camel(n: String) -> String {
+    let j = json_name(n).bytes()
+    let mut out = j.copy()
+    if out.len() > 0 && out[0] >= 97 && out[0] <= 122 { out[0] = out[0] - 32 }
+    String.from_bytes(out).unwrap()
+}
+
+fn dotted(full: String) -> String {
+    let mut s = String.from(".")
+    s.append(full)
+    s
+}
+
+pub type Rs = fn(String, String) -> Option[Resolved]
+
+/// One field: `scope` is the full name of the message it is in (for resolving its type).
+fn field_desc(f: parser.Field, scope: String, rs: Rs, oneof_index: i64, proto3_optional: bool) -> Result[List[u8], String] {
+    let mut out: List[u8] = List.new()
+    put_str(inout out, 1, f.name.copy())
+    put_int(inout out, 3, f.num as i64)
+    put_int(inout out, 4, if f.label == 1 { 3 } else { 1 })
+    let st = scalar_type(f.typ.copy())
+    if st != 0 {
+        put_int(inout out, 5, st as i64)
+    } else {
+        match rs(f.typ.copy(), scope) {
+            Some(r) => {
+                put_int(inout out, 5, if r.is_enum { 14 } else { 11 })
+                put_str(inout out, 6, dotted(r.full.copy()))
+            }
+            None => {
+                let mut e = String.from("unknown type ")
+                e.append(f.typ.copy())
+                return Err(e)
+            }
+        }
+    }
+    if oneof_index >= 0 { put_int(inout out, 9, oneof_index) }
+    put_str(inout out, 10, json_name(f.name.copy()))
+    if proto3_optional { put_bool(inout out, 17, true) }
+    Ok(out)
+}
+
+fn message_desc(m: parser.Message, scope: String, rs: Rs) -> Result[List[u8], String] {
+    let full = if scope.len() > 0 { let mut x = scope.copy(); x.push_str("."); x.append(m.name.copy()); x } else { m.name.copy() }
+    let mut out: List[u8] = List.new()
+    put_str(inout out, 1, m.name.copy())
+    // synthetic oneofs for proto3 `optional` come after the declared ones
+    let mut synth: List[String] = List.new()
+    let mut entries: List[List[u8]] = List.new()
+    for f in m.fields {
+        let mut oi: i64 = -1
+        for k in 0..m.oneofs.len() {
+            if m.oneofs[k] == f.oneof { oi = k as i64 }
+        }
+        if f.map_key.len() > 0 {
+            // a map: a repeated field of a nested entry message
+            let mut en = camel(f.name.copy())
+            en.push_str("Entry")
+            let mut fd: List[u8] = List.new()
+            put_str(inout fd, 1, f.name.copy())
+            put_int(inout fd, 3, f.num as i64)
+            put_int(inout fd, 4, 3)
+            put_int(inout fd, 5, 11)
+            let mut tn = full.copy()
+            tn.push_str(".")
+            tn.append(en.copy())
+            put_str(inout fd, 6, dotted(tn))
+            put_str(inout fd, 10, json_name(f.name.copy()))
+            put_msg(inout out, 2, fd)
+            // the entry message
+            let key = parser.Field(String.from("key"), 1, f.map_key.copy(), 0, String.from(""), String.from(""), String.from(""), -1, 0)
+            let val = parser.Field(String.from("value"), 2, f.map_val.copy(), 0, String.from(""), String.from(""), String.from(""), -1, 0)
+            let mut ent: List[u8] = List.new()
+            put_str(inout ent, 1, en.copy())
+            put_msg(inout ent, 2, field_desc(key, full.copy(), rs, -1, false)?)
+            put_msg(inout ent, 2, field_desc(val, full.copy(), rs, -1, false)?)
+            let mut opts: List[u8] = List.new()
+            put_bool(inout opts, 7, true)
+            put_msg(inout ent, 7, opts)
+            entries.push(ent)
+            continue
+        }
+        if f.label == 2 {
+            oi = (m.oneofs.len() + synth.len()) as i64
+            let mut sn = String.from("_")
+            sn.append(f.name.copy())
+            synth.push(sn)
+            put_msg(inout out, 2, field_desc(f.copy(), full.copy(), rs, oi, true)?)
+        } else {
+            put_msg(inout out, 2, field_desc(f.copy(), full.copy(), rs, oi, false)?)
+        }
+    }
+    for n in m.messages { put_msg(inout out, 3, message_desc(n.copy(), full.copy(), rs)?) }
+    for e in entries { put_msg(inout out, 3, e) }
+    for e in m.enums { put_msg(inout out, 4, enum_desc(e.copy())) }
+    for o in m.oneofs {
+        let mut od: List[u8] = List.new()
+        put_str(inout od, 1, o.copy())
+        put_msg(inout out, 8, od)
+    }
+    for sname in synth {
+        let mut od: List[u8] = List.new()
+        put_str(inout od, 1, sname.copy())
+        put_msg(inout out, 8, od)
+    }
+    Ok(out)
+}
+
+fn enum_desc(e: parser.Enum) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    put_str(inout out, 1, e.name.copy())
+    for v in e.values {
+        let mut vd: List[u8] = List.new()
+        put_str(inout vd, 1, v.name.copy())
+        put_int(inout vd, 2, v.num)
+        put_msg(inout out, 2, vd)
+    }
+    out
+}
+
+/// The serialized FileDescriptorProto of `f`; `rs(type name, scope)` says what a type name in a message of full name `scope` refers to.
+pub fn file_descriptor(f: parser.File, rs: Rs) -> Result[List[u8], String] {
+    let mut out: List[u8] = List.new()
+    put_str(inout out, 1, f.path.copy())
+    if f.package.len() > 0 { put_str(inout out, 2, f.package.copy()) }
+    for d in f.imports { put_str(inout out, 3, d.copy()) }
+    for m in f.messages { put_msg(inout out, 4, message_desc(m.copy(), f.package.copy(), rs)?) }
+    for e in f.enums { put_msg(inout out, 5, enum_desc(e.copy())) }
+    for sv in f.services {
+        let mut sd: List[u8] = List.new()
+        put_str(inout sd, 1, sv.name.copy())
+        for r in sv.rpcs {
+            let mut md: List[u8] = List.new()
+            put_str(inout md, 1, r.name.copy())
+            match rs(r.input.copy(), f.package.copy()) {
+                Some(x) => { put_str(inout md, 2, dotted(x.full.copy())) }
+                None => { return Err(cat(String.from("unknown type "), r.input.copy())) }
+            }
+            match rs(r.output.copy(), f.package.copy()) {
+                Some(x) => { put_str(inout md, 3, dotted(x.full.copy())) }
+                None => { return Err(cat(String.from("unknown type "), r.output.copy())) }
+            }
+            if r.client_stream { put_bool(inout md, 5, true) }
+            if r.server_stream { put_bool(inout md, 6, true) }
+            put_msg(inout sd, 2, md)
+        }
+        put_msg(inout out, 6, sd)
+    }
+    if f.syntax == String.from("proto3") { put_str(inout out, 12, String.from("proto3")) }
+    Ok(out)
+}
+
+fn cat(a: String, b: String) -> String {
+    let mut l = a.copy()
+    l.append(b)
+    l
+}

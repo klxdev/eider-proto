@@ -1,0 +1,7 @@
+github.com/moby/buildkit/solver/pb/ops.proto: 7005 bytes, 0 imports, 51 symbols
+github.com/moby/buildkit/api/types/worker.proto: 1140 bytes, 1 imports, 4 symbols
+github.com/moby/buildkit/sourcepolicy/pb/policy.proto: 1054 bytes, 0 imports, 8 symbols
+google/protobuf/timestamp.proto: 119 bytes, 0 imports, 1 symbols
+google/protobuf/any.proto: 108 bytes, 0 imports, 1 symbols
+google/rpc/status.proto: 176 bytes, 1 imports, 1 symbols
+api/services/control/control.proto: 7681 bytes, 5 imports, 38 symbols

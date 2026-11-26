@@ -1,0 +1,30 @@
+// The FileDescriptorProto of each generated file (what server reflection serves), as hex, one `<file name> <hex>` line per file, for
+// tests/descriptors.sh, which has protoc's descriptors for the same files compared with them. Without arguments it prints a summary.
+
+import std.encoding
+import std.env
+import std.io
+import proto
+import proto.tests.buildkit.api_services_control_control as ctl
+
+fn main() uses io {
+    let mut all: List[proto.FileDesc] = List.new()
+    ctl.add_descs(inout all)
+    let emit = env.args().len() > 1
+    for d in all {
+        let mut l = d.name.copy()
+        if emit {
+            l.push_str(" ")
+            l.append(encoding.hex(d.data.copy()))
+        } else {
+            l.push_str(": ")
+            l.append(d.data.len().to_string())
+            l.push_str(" bytes, ")
+            l.append(d.deps.len().to_string())
+            l.push_str(" imports, ")
+            l.append(d.symbols.len().to_string())
+            l.push_str(" symbols")
+        }
+        io.outln(l.bytes())
+    }
+}

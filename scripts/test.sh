@@ -41,5 +41,6 @@ if [ -n "$TSAN" ]; then
 fi
 # the reference implementation reads what Eider writes (needs python3 with protobuf and grpcio-tools; `skip` without)
 sh tests/golden.sh || fail=1
+sh tests/descriptors.sh || fail=1
 [ $fail = 0 ] && echo "ALL OK"
 exit $fail
