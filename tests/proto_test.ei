@@ -1,0 +1,205 @@
+// proto: varints, zigzag, fixed, every scalar kind, nested messages, repeated (packed and not), maps, oneofs,
+// optional fields, unknown fields kept through a round trip, merging, and malformed input.
+
+import core.sys
+import std.bytes
+import std.encoding
+import std.io
+import std.serial
+import proto
+
+@[derive(Serialize, Deserialize)]
+type Inner = { n: i32, unknown_fields: serial.Bytes }
+
+@[derive(Serialize, Deserialize)]
+type Shape = | Circle(value: i32) | Name(value: String) | Box(value: Inner)
+
+@[derive(Serialize, Deserialize)]
+type Person = {
+    name: String,
+    id: i32,
+    email: String,
+    ok: bool,
+    big: u64,
+    neg: i64,
+    zz: i32,
+    zz64: i64,
+    f32v: u32,
+    sf64: i64,
+    d: f64,
+    fl: f64,
+    data: serial.Bytes,
+    tags: List[String],
+    nums: List[i32],
+    raw: List[u64],
+    inners: List[Inner],
+    inner: Option[Inner],
+    opt: Option[i32],
+    scores: Map[String, i32],
+    byid: Map[String, Inner],
+    shape: Option[Shape],
+    unknown_fields: serial.Bytes,
+}
+
+fn say(s: String) uses io { io.outln(s.bytes()) }
+fn cat(a: str, b: String) -> String {
+    let mut l = String.from(a)
+    l.append(b)
+    l
+}
+fn hx(b: List[u8]) -> String { encoding.hex(b) }
+
+fn unhex(s: str) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut hi: i32 = -1
+    for c in sys.lit(s) {
+        let v: i32 = if c >= 48 && c <= 57 { (c as i32) - 48 } else if c >= 97 && c <= 102 { (c as i32) - 87 } else { -1 }
+        if v < 0 { continue }
+        if hi < 0 { hi = v } else {
+            out.push((hi * 16 + v) as u8)
+            hi = -1
+        }
+    }
+    out
+}
+
+fn reg() -> proto.Registry {
+    let mut r = proto.registry()
+    r.add(proto.message("t.Inner").field(1, "n", proto.INT32))
+    r.add(proto.message("t.Person")
+        .field(1, "name", proto.STRING)
+        .field(2, "id", proto.INT32)
+        .field(3, "email", proto.STRING)
+        .field(4, "ok", proto.BOOL)
+        .field(5, "big", proto.UINT64)
+        .field(6, "neg", proto.INT64)
+        .field(7, "zz", proto.SINT32)
+        .field(8, "zz64", proto.SINT64)
+        .field(9, "f32v", proto.FIXED32)
+        .field(10, "sf64", proto.SFIXED64)
+        .field(11, "d", proto.DOUBLE)
+        .field(12, "fl", proto.FLOAT)
+        .field(13, "data", proto.BYTES)
+        .repeated(14, "tags", proto.STRING)
+        .repeated(15, "nums", proto.INT32)
+        .repeated_unpacked(16, "raw", proto.UINT64)
+        .repeated_message(17, "inners", "t.Inner")
+        .message_field(18, "inner", "t.Inner")
+        .optional(19, "opt", proto.INT32)
+        .map(20, "scores", proto.STRING, proto.INT32, "")
+        .map(21, "byid", proto.INT32, proto.MESSAGE, "t.Inner")
+        .oneof("shape", List[proto.member(30, "Circle", proto.INT32, ""), proto.member(31, "Name", proto.STRING, ""), proto.member(32, "Box", proto.MESSAGE, "t.Inner")]))
+    r
+}
+
+fn empty_person() -> Person {
+    Person(String.from(""), 0, String.from(""), false, 0, 0, 0, 0, 0, 0, 0.0, 0.0, serial.Bytes(List.new()), List.new(), List.new(), List.new(), List.new(), None, None, Map.new(), Map.new(), None, serial.Bytes(List.new()))
+}
+
+fn main() uses io {
+    say(String.from("-- varints"))
+    for v in List[0 as u64, 1, 127, 128, 300, 16384, 4294967295, 18446744073709551615] {
+        let mut b: List[u8] = List.new()
+        proto.put_varint(inout b, v)
+        let (back, n) = proto.get_varint(b, 0).unwrap()
+        say(hx(b))
+        if back != v || n != b.len() { say(String.from("  MISMATCH")) }
+    }
+    for bad in List["80", "ffffffffffffffffffff01", "ffffffffffffffffffff", "8080808080808080808000"] {
+        match proto.get_varint(unhex(bad), 0) {
+            Ok(x) => { say(cat("  accepted ", String.from(bad))) }
+            Err(e) => { say(e) }
+        }
+    }
+    say(String.from("-- zigzag"))
+    for v in List[0 as i64, -1, 1, -2, 2147483647, -2147483648] {
+        say(proto.zigzag64(v).to_string())
+        if proto.unzigzag64(proto.zigzag64(v)) != v { say(String.from("  MISMATCH")) }
+    }
+
+    say(String.from("-- the example of the protobuf documentation"))
+    let r = reg()
+    let mut p = empty_person()
+    p.name = String.from("John Doe")
+    p.id = 1234
+    p.email = String.from("jdoe@example.com")
+    let b = proto.encode(r, "t.Person", p).unwrap()
+    say(hx(b))
+    let back = proto.decode[Person](r, "t.Person", b).unwrap()
+    say(cat("name=", back.name.copy()))
+    say(cat("id=", back.id.to_string()))
+
+    say(String.from("-- every kind, nested, repeated, maps, oneof"))
+    let mut q = empty_person()
+    q.name = String.from("x")
+    q.ok = true
+    q.big = 18446744073709551615
+    q.neg = -5
+    q.zz = -3
+    q.zz64 = -4000000000
+    q.f32v = 4000000000
+    q.sf64 = -9
+    q.d = 2.5
+    q.fl = 1.5
+    q.data = serial.Bytes(unhex("00ff10"))
+    q.tags = List[String.from("a"), String.from("bc")]
+    q.nums = List[1 as i32, -1, 300]
+    q.raw = List[7 as u64, 8]
+    q.inners = List[Inner(1, serial.Bytes(List.new())), Inner(0, serial.Bytes(List.new()))]
+    q.inner = Some(Inner(0, serial.Bytes(List.new())))
+    q.opt = Some(0)
+    q.scores.insert(String.from("k"), 5)
+    q.byid.insert(String.from("-7"), Inner(9, serial.Bytes(List.new())))
+    q.shape = Some(Box(Inner(4, serial.Bytes(List.new()))))
+    let wire = proto.encode(r, "t.Person", q).unwrap()
+    say(hx(wire))
+    let q2 = proto.decode[Person](r, "t.Person", wire).unwrap()
+    let wire2 = proto.encode(r, "t.Person", q2).unwrap()
+    say(String.from(if bytes.eq(wire, wire2) { "re-encoded identically" } else { "DIFFERENT" }))
+    say(cat("zz=", q2.zz.to_string()))
+    say(cat("neg=", q2.neg.to_string()))
+    say(cat("big=", q2.big.to_string()))
+    say(cat("nums=", q2.nums.len().to_string()))
+    say(cat("opt present=", q2.opt.is_some().to_string()))
+    say(cat("inner present=", q2.inner.is_some().to_string()))
+    say(cat("shape is box=", match q2.shape { Some(Box(x)) => x.n.to_string(), _ => String.from("no") }))
+    say(cat("map key -7=", q2.byid.contains(String.from("-7")).to_string()))
+
+    say(String.from("-- an empty message is empty on the wire, and decodes to the defaults"))
+    say(hx(proto.encode(r, "t.Person", empty_person()).unwrap()))
+    let e = proto.decode[Person](r, "t.Person", List.new()).unwrap()
+    say(cat("defaults: id=", e.id.to_string()))
+    say(cat("inner absent=", e.inner.is_none().to_string()))
+
+    say(String.from("-- unknown fields survive a round trip"))
+    // known: name = "x" (1); unknown: varint field 100, string field 101, fixed32 field 102, a group (field 103)
+    let unk = unhex("0a0178 a00607 aa06026869 b50601020304 bb060805bc06")
+    let p3 = proto.decode[Person](r, "t.Person", unk).unwrap()
+    say(cat("name=", p3.name.copy()))
+    say(cat("unknown bytes kept=", p3.unknown_fields.data.len().to_string()))
+    let again = proto.encode(r, "t.Person", p3).unwrap()
+    say(hx(again))
+    say(String.from(if bytes.eq(again, unhex("0a0178a00607aa06026869b50601020304bb060805bc06")) || bytes.eq(again, unhex("0a0178")) == false { "unknown fields written back" } else { "LOST" }))
+    // a field whose wire type does not match its declared kind is unknown too (field 2 declared int32, sent as a string)
+    let odd = proto.decode[Person](r, "t.Person", unhex("12026869")).unwrap()
+    say(cat("id=", odd.id.to_string()))
+    say(cat("kept=", hx(proto.encode(r, "t.Person", odd).unwrap())))
+
+    say(String.from("-- merging: later scalars win, repeated append, message fields merge"))
+    let m1 = proto.decode[Person](r, "t.Person", unhex("1001 1002 7a02 0801 7a00 0a0161 0a0162")).unwrap()
+    say(cat("id=", m1.id.to_string()))
+    say(cat("name=", m1.name.copy()))
+    say(cat("inner=", match m1.inner { Some(x) => x.n.to_string(), None => String.from("absent") }))
+    let m2 = proto.decode[Person](r, "t.Person", unhex("92010208 05 920100 920102 0807")).unwrap()
+    say(cat("inner merged=", match m2.inner { Some(x) => x.n.to_string(), None => String.from("absent") }))
+    let m3 = proto.decode[Person](r, "t.Person", unhex("7a0208 01 7a00")).unwrap()
+    say(cat("packed in two pieces and unpacked: nums=", m3.nums.len().to_string()))
+
+    say(String.from("-- malformed"))
+    for bad in List["0a", "0a05616263", "0aff", "0a02ff00", "0000", "0b", "0c", "08", "0d010203", "090102", "7a0180"] {
+        match proto.decode[Person](r, "t.Person", unhex(bad)) {
+            Ok(x) => { say(cat("  accepted ", String.from(bad))) }
+            Err(e) => { say(cat("  ", String.from_bytes(serial.error_text(e)).unwrap())) }
+        }
+    }
+}

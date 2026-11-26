@@ -1,0 +1,1060 @@
+//! proto: Protocol Buffers (proto3) as a `std/serial` format. The wire format (varints and zigzag, fixed32/64,
+//! length-delimited fields, packed repeated fields, maps, oneofs, enums, nested messages), unknown fields kept
+//! through a decode and an encode, and typed access: a record type that is `Serialize` / `Deserialize` goes to
+//! bytes with `proto.encode(registry, "pkg.Message", value)` and comes back with `proto.decode(registry,
+//! "pkg.Message", bytes)`. Pure Eider; no capability. It depends on nothing: no HTTP, no RPC.
+//!
+//! The data model of `std/serial` has names, and protobuf has numbers, so a message's shape comes from a
+//! `Registry` (the numbered fields of each message, by full name). The generator (`proto/gen`) writes the Eider types
+//! (`@[derive(Serialize, Deserialize)]`) and the function that builds their registry from `.proto` files; a registry
+//! can also be built by hand (`message`, `field`, ...).
+//!
+//!     let reg = proto.registry()
+//!     reg.add(proto.message("demo.Person").field(1, "name", proto.STRING).field(2, "id", proto.INT32)
+//!         .repeated(3, "emails", proto.STRING))
+//!     let bytes = proto.encode(reg, "demo.Person", person)?
+//!     let back: Person = proto.decode(reg, "demo.Person", bytes)?
+//!
+//! How a field is written and read (proto3): a singular scalar is omitted when it is zero, empty or false, unless the
+//! field has presence (`optional`, or a member of a oneof); a singular message is present or absent (an `Option` of
+//! the message type); a repeated scalar is packed and a reader takes packed or not; a map is a list of entries
+//! `{key = 1, value = 2}` (its Eider type is `Map[String, V]`: an integer or bool key is its decimal text, `true` or
+//! `false`); a oneof is an `Option` of an enum whose variants each hold one `value`; an enum field is an `i32`, so
+//! an unknown value survives; `float` is an f64 in Eider and 4 bytes on the wire. A decoder fills every absent field with
+//! its default, and what it does not know (a field number outside the schema, or a wire type that does not match
+//! the declared one) is kept verbatim in `unknown_fields` (a `serial.Bytes`) and written back by the encoder, so a
+//! message passes through a program that knows only part of it unchanged. Merging follows the spec: a later scalar
+//! replaces an earlier one, repeated fields append, two encodings of a message field are merged.
+//!
+//! Limits (`Limits`): message nesting (default 64), the input size, and the number of elements of one repeated or
+//! map field. Malformed input (a truncated or overlong varint, a length past the end, a group that does not close,
+//! invalid UTF-8 in a `string`, field number 0) is an `Err` that says where.
+
+import std.bytes
+import std.math
+import std.serial
+import std.utf8
+
+// ---- wire types and field kinds ----
+
+pub const WT_VARINT: u32 = 0
+pub const WT_I64: u32 = 1
+pub const WT_LEN: u32 = 2
+pub const WT_SGROUP: u32 = 3
+pub const WT_EGROUP: u32 = 4
+pub const WT_I32: u32 = 5
+
+/// Field kinds: the numbers of `FieldDescriptorProto.Type` (descriptor.proto).
+pub const DOUBLE: i32 = 1
+pub const FLOAT: i32 = 2
+pub const INT64: i32 = 3
+pub const UINT64: i32 = 4
+pub const INT32: i32 = 5
+pub const FIXED64: i32 = 6
+pub const FIXED32: i32 = 7
+pub const BOOL: i32 = 8
+pub const STRING: i32 = 9
+pub const MESSAGE: i32 = 11
+pub const BYTES: i32 = 12
+pub const UINT32: i32 = 13
+pub const ENUM: i32 = 14
+pub const SFIXED32: i32 = 15
+pub const SFIXED64: i32 = 16
+pub const SINT32: i32 = 17
+pub const SINT64: i32 = 18
+
+// ---- varints, zigzag, fixed ----
+
+/// Appends `v` as a varint (1 to 10 bytes).
+pub fn put_varint(inout out: List[u8], v: u64) {
+    let mut r = v.copy()
+    while r >= 128 {
+        out.push(((r & 127) as u8) | 128)
+        r = r >> (7 as u64)
+    }
+    out.push(r as u8)
+}
+
+/// The varint at `pos`: its value and the position after it. At most 10 bytes, and the tenth may only carry the top bit.
+pub fn get_varint(b: List[u8], pos: usize) -> Result[(u64, usize), String] {
+    let mut v: u64 = 0
+    let mut shift: u64 = 0
+    let mut p = pos.copy()
+    while p < b.len() && shift < 70 {
+        let c = b[p]
+        p += 1
+        if shift == 63 && (c & 254) != 0 { return Err(String.from("a varint is longer than 64 bits")) }
+        v = v | (((c & 127) as u64) << shift)
+        if c < 128 { return Ok((v, p)) }
+        shift += 7
+    }
+    if p >= b.len() { return Err(String.from("a truncated varint")) }
+    Err(String.from("a varint is longer than 10 bytes"))
+}
+
+/// The 64 bits of `n` (two's complement) as a u64, and back: `as` checks the range, these keep the bits.
+pub fn bits64(n: i64) -> u64 {
+    let low = ((n & 9223372036854775807) as u64)
+    if n < 0 { return low | 9223372036854775808 }
+    low
+}
+
+pub fn from_bits64(u: u64) -> i64 {
+    if (u & 9223372036854775808) == 0 { return u as i64 }
+    ((u & 9223372036854775807) as i64) - 9223372036854775807 - 1
+}
+
+/// The low 32 bits of `n` as a u32, and a u32's bits as an i32.
+pub fn trunc32(n: i64) -> u32 { (n & 0xffffffff) as u32 }
+
+pub fn sx32(u: u32) -> i32 {
+    if u < 2147483648 { return u as i32 }
+    ((u as i64) - 4294967296) as i32
+}
+
+pub fn zigzag64(v: i64) -> u64 {
+    if v >= 0 { return (v as u64) * 2 }
+    (((0 - (v + 1)) as u64) * 2) + 1
+}
+
+pub fn unzigzag64(u: u64) -> i64 {
+    if u % 2 == 0 { return (u / 2) as i64 }
+    (0 - ((u / 2) as i64)) - 1
+}
+
+pub fn zigzag32(v: i32) -> u32 { zigzag64(v as i64) as u32 }
+pub fn unzigzag32(u: u32) -> i32 { unzigzag64(u as u64) as i32 }
+
+pub fn put_fixed32(inout out: List[u8], v: u32) {
+    out.push((v & 255) as u8)
+    out.push(((v >> (8 as u32)) & 255) as u8)
+    out.push(((v >> (16 as u32)) & 255) as u8)
+    out.push(((v >> (24 as u32)) & 255) as u8)
+}
+
+pub fn put_fixed64(inout out: List[u8], v: u64) {
+    let mut i: u64 = 0
+    while i < 8 {
+        out.push(((v >> (i * 8)) & 255) as u8)
+        i += 1
+    }
+}
+
+pub fn get_fixed32(b: List[u8], pos: usize) -> Result[u32, String] {
+    if pos + 4 > b.len() { return Err(String.from("a truncated fixed32")) }
+    Ok((b[pos] as u32) | ((b[pos + 1] as u32) << (8 as u32)) | ((b[pos + 2] as u32) << (16 as u32)) | ((b[pos + 3] as u32) << (24 as u32)))
+}
+
+pub fn get_fixed64(b: List[u8], pos: usize) -> Result[u64, String] {
+    if pos + 8 > b.len() { return Err(String.from("a truncated fixed64")) }
+    let mut v: u64 = 0
+    let mut i: u64 = 0
+    while i < 8 {
+        v = v | ((b[pos + (i as usize)] as u64) << (i * 8))
+        i += 1
+    }
+    Ok(v)
+}
+
+pub fn put_tag(inout out: List[u8], num: u32, wt: u32) { put_varint(inout out, (((num as u64) << (3 as u64)) | (wt as u64))) }
+
+// ---- the schema ----
+
+/// One numbered field of a message. `kind` is a field kind (`INT32`, ..., `MESSAGE`); `shape` 0 singular, 1 repeated, 2 map;
+/// `packed` (repeated scalars: written packed); `presence` (a singular field that is written even when it is the default:
+/// `optional`, and the members of a oneof); `msg` the full name of the message type of a `MESSAGE` field (or of a map's
+/// value); a map's key is `key_kind` and its value `val_kind`.
+pub type Field = {
+    num: u32,
+    name: List[u8],
+    kind: i32,
+    shape: i32,
+    packed: bool,
+    presence: bool,
+    msg: List[u8],
+    key_kind: i32,
+    val_kind: i32,
+}
+
+/// A oneof: `name` is the record field (an `Option` of an enum) and `variants` are its members, each a `Field` whose
+/// `name` is the variant of the enum (the enum variant holds one field, `value`).
+pub type Oneof = { name: List[u8], variants: List[Field] }
+
+/// A message type: its full name (`pkg.Outer.Inner`), its fields and its oneofs.
+pub type Message = { name: List[u8], fields: List[Field], oneofs: List[Oneof] }
+
+/// A set of messages by full name.
+pub type Registry = { msgs: Map[String, Message] }
+
+pub fn registry() -> Registry { Registry(Map.new()) }
+
+/// A message being described.
+pub fn message(name: str) -> Message { Message(name.bytes(), List.new(), List.new()) }
+
+fn field_of(num: u32, name: str, kind: i32, shape: i32) -> Field {
+    let packed = shape == 1 && is_packable(kind)
+    Field(num, name.bytes(), kind, shape, packed, false, List.new(), 0, 0)
+}
+
+impl Message {
+    /// A singular scalar (or enum: `ENUM`) field.
+    fn field(self, num: u32, name: str, kind: i32) -> Message {
+        let mut m = self.copy()
+        m.fields.push(field_of(num, name, kind, 0))
+        m
+    }
+
+    /// A singular scalar that has presence (`optional`).
+    fn optional(self, num: u32, name: str, kind: i32) -> Message {
+        let mut m = self.copy()
+        let mut f = field_of(num, name, kind, 0)
+        f.presence = true
+        m.fields.push(f)
+        m
+    }
+
+    /// A singular message field of type `msg` (present or absent).
+    fn message_field(self, num: u32, name: str, msg: str) -> Message {
+        let mut m = self.copy()
+        let mut f = field_of(num, name, MESSAGE, 0)
+        f.msg = msg.bytes()
+        f.presence = true
+        m.fields.push(f)
+        m
+    }
+
+    /// A repeated scalar (packed, as proto3 does by default).
+    fn repeated(self, num: u32, name: str, kind: i32) -> Message {
+        let mut m = self.copy()
+        m.fields.push(field_of(num, name, kind, 1))
+        m
+    }
+
+    /// A repeated scalar written unpacked.
+    fn repeated_unpacked(self, num: u32, name: str, kind: i32) -> Message {
+        let mut m = self.copy()
+        let mut f = field_of(num, name, kind, 1)
+        f.packed = false
+        m.fields.push(f)
+        m
+    }
+
+    /// A repeated message field of type `msg`.
+    fn repeated_message(self, num: u32, name: str, msg: str) -> Message {
+        let mut m = self.copy()
+        let mut f = field_of(num, name, MESSAGE, 1)
+        f.msg = msg.bytes()
+        m.fields.push(f)
+        m
+    }
+
+    /// A `map<key_kind, val_kind>` field; `val_msg` is the message type of the value when `val_kind` is `MESSAGE` (else "").
+    fn map(self, num: u32, name: str, key_kind: i32, val_kind: i32, val_msg: str) -> Message {
+        let mut m = self.copy()
+        let mut f = field_of(num, name, MESSAGE, 2)
+        f.key_kind = key_kind
+        f.val_kind = val_kind
+        f.msg = val_msg.bytes()
+        m.fields.push(f)
+        m
+    }
+
+    /// A oneof named `name` (the record field) with its members.
+    fn oneof(self, name: str, variants: List[Field]) -> Message {
+        let mut m = self.copy()
+        m.oneofs.push(Oneof(name.bytes(), variants))
+        m
+    }
+}
+
+/// A oneof member: field number `num`, enum variant `variant`, of `kind` (and `msg` for a message).
+pub fn member(num: u32, variant: str, kind: i32, msg: str) -> Field {
+    let mut f = field_of(num, variant, kind, 0)
+    f.presence = true
+    f.msg = msg.bytes()
+    f
+}
+
+impl Registry {
+    /// Adds a message (replacing one of the same name).
+    fn add(inout self, m: Message) { self.msgs.insert(String.from_bytes(m.name.copy()).unwrap(), m) }
+
+    fn find(self, name: List[u8]) -> Option[Message] {
+        match String.from_bytes(name.copy()) {
+            Ok(s) => self.msgs.get(s)
+            Err(e) => None
+        }
+    }
+}
+
+fn is_packable(kind: i32) -> bool { kind != STRING && kind != BYTES && kind != MESSAGE }
+
+fn wire_type_of(kind: i32) -> u32 {
+    if kind == DOUBLE || kind == FIXED64 || kind == SFIXED64 { return WT_I64 }
+    if kind == FLOAT || kind == FIXED32 || kind == SFIXED32 { return WT_I32 }
+    if kind == STRING || kind == BYTES || kind == MESSAGE { return WT_LEN }
+    WT_VARINT
+}
+
+/// Decoding and encoding limits.
+pub type Limits = { max_depth: usize, max_bytes: usize, max_elements: usize }
+
+pub fn limits() -> Limits { Limits(64, 67108864, 1000000) }
+
+fn err(why: str) -> serial.Error { serial.error(why) }
+
+fn err_at(path: List[u8], why: String) -> serial.Error { serial.error_at(path, why.bytes()) }
+
+fn name_str(b: List[u8]) -> String { utf8.lossy(b.copy()) }
+
+// ---- encoding: a serial.Value and a schema to bytes ----
+
+fn find_entry(es: List[serial.Entry], name: List[u8]) -> Option[serial.Value] {
+    for e in es {
+        if bytes.eq(e.key, name) { return Some(e.value) }
+    }
+    None
+}
+
+fn as_i64(v: serial.Value) -> Option[i64] {
+    match v {
+        serial.VInt(n) => Some(n)
+        serial.VUint(u) => { if u > 9223372036854775807 { None } else { Some(u as i64) } }
+        _ => None
+    }
+}
+
+fn as_u64(v: serial.Value) -> Option[u64] {
+    match v {
+        serial.VUint(u) => Some(u)
+        serial.VInt(n) => { if n < 0 { None } else { Some(n as u64) } }
+        _ => None
+    }
+}
+
+/// Whether `v` is what a reader fills in for an absent field of `kind` (and so is not written in proto3).
+fn is_default(kind: i32, v: serial.Value) -> bool {
+    match v {
+        serial.VNull => true
+        serial.VBool(b) => !b
+        serial.VInt(n) => n == 0
+        serial.VUint(u) => u == 0
+        serial.VFloat(f) => f.to_bits() == 0
+        serial.VStr(s) => s.len() == 0
+        serial.VBytes(s) => s.len() == 0
+        _ => false
+    }
+}
+
+fn bad_value(path: List[u8], kind: i32, what: str) -> serial.Error {
+    let mut m = String.from("expected ")
+    m.push_str(what)
+    err_at(path, m)
+}
+
+/// The payload of one scalar (without its tag) as `kind` writes it.
+fn put_scalar(inout out: List[u8], kind: i32, v: serial.Value, path: List[u8]) -> Result[(), serial.Error] {
+    if kind == INT32 || kind == ENUM || kind == INT64 || kind == SINT32 || kind == SINT64 || kind == SFIXED32 || kind == SFIXED64 {
+        let n = match as_i64(v) {
+            Some(x) => x
+            None => { return Err(bad_value(path, kind, "an integer")) }
+        }
+        if (kind == INT32 || kind == ENUM || kind == SINT32 || kind == SFIXED32) && (n < -2147483648 || n > 2147483647) {
+            return Err(err_at(path, String.from("the number does not fit in 32 bits")))
+        }
+        if kind == INT32 || kind == ENUM || kind == INT64 {
+            put_varint(inout out, bits64(n))
+        } else if kind == SINT32 {
+            put_varint(inout out, zigzag64(n))
+        } else if kind == SINT64 {
+            put_varint(inout out, zigzag64(n))
+        } else if kind == SFIXED32 {
+            put_fixed32(inout out, trunc32(n))
+        } else {
+            put_fixed64(inout out, bits64(n))
+        }
+        return Ok(())
+    }
+    if kind == UINT32 || kind == UINT64 || kind == FIXED32 || kind == FIXED64 {
+        let u = match as_u64(v) {
+            Some(x) => x
+            None => { return Err(bad_value(path, kind, "a non-negative integer")) }
+        }
+        if (kind == UINT32 || kind == FIXED32) && u > 0xffffffff { return Err(err_at(path, String.from("the number does not fit in 32 bits"))) }
+        if kind == UINT32 || kind == UINT64 {
+            put_varint(inout out, u)
+        } else if kind == FIXED32 {
+            put_fixed32(inout out, u as u32)
+        } else {
+            put_fixed64(inout out, u)
+        }
+        return Ok(())
+    }
+    if kind == BOOL {
+        match v {
+            serial.VBool(b) => { out.push(if b { 1 } else { 0 }) }
+            _ => { return Err(bad_value(path, kind, "a boolean")) }
+        }
+        return Ok(())
+    }
+    if kind == DOUBLE || kind == FLOAT {
+        let f = match v {
+            serial.VFloat(x) => x
+            serial.VInt(n) => n as f64
+            serial.VUint(u) => u as f64
+            _ => { return Err(bad_value(path, kind, "a number")) }
+        }
+        if kind == DOUBLE {
+            put_fixed64(inout out, f.to_bits())
+        } else {
+            let s: f32 = f as f32
+            put_fixed32(inout out, s.to_bits())
+        }
+        return Ok(())
+    }
+    if kind == STRING {
+        match v {
+            serial.VStr(s) => { out.extend(s) }
+            _ => { return Err(bad_value(path, kind, "a string")) }
+        }
+        return Ok(())
+    }
+    if kind == BYTES {
+        match v {
+            serial.VBytes(s) => { out.extend(s) }
+            _ => { return Err(bad_value(path, kind, "bytes")) }
+        }
+        return Ok(())
+    }
+    Err(err_at(path, String.from("a field of this kind has no scalar form")))
+}
+
+/// A scalar with its tag; a length-delimited kind gets its length first.
+fn put_tagged(inout out: List[u8], num: u32, kind: i32, v: serial.Value, path: List[u8]) -> Result[(), serial.Error] {
+    let wt = wire_type_of(kind)
+    put_tag(inout out, num, wt)
+    if wt == WT_LEN {
+        let mut tmp: List[u8] = List.new()
+        put_scalar(inout tmp, kind, v, path)?
+        put_varint(inout out, tmp.len() as u64)
+        out.extend(tmp)
+        return Ok(())
+    }
+    put_scalar(inout out, kind, v, path)
+}
+
+fn put_message_field(reg: Registry, inout out: List[u8], num: u32, msg: List[u8], v: serial.Value, depth: usize, lim: Limits, path: List[u8]) -> Result[(), serial.Error] {
+    let m = match reg.find(msg) {
+        Some(x) => x
+        None => {
+            let mut w = String.from("no message called ")
+            w.append(name_str(msg))
+            return Err(err_at(path, w))
+        }
+    }
+    let es = match v {
+        serial.VMap(x) => x
+        _ => { return Err(bad_value(path, MESSAGE, "a message")) }
+    }
+    let mut tmp: List[u8] = List.new()
+    enc_message(reg, m, es, inout tmp, depth + 1, lim, path)?
+    put_tag(inout out, num, WT_LEN)
+    put_varint(inout out, tmp.len() as u64)
+    out.extend(tmp)
+    Ok(())
+}
+
+/// A map key's text as the wire value of `kind`.
+fn map_key_value(kind: i32, text: List[u8], path: List[u8]) -> Result[serial.Value, serial.Error] {
+    if kind == STRING { return Ok(serial.VStr(text)) }
+    if kind == BOOL {
+        if bytes.eq(text, "true".bytes()) { return Ok(serial.VBool(true)) }
+        if bytes.eq(text, "false".bytes()) { return Ok(serial.VBool(false)) }
+        return Err(err_at(path, String.from("a bool map key is true or false")))
+    }
+    let neg = text.len() > 0 && text[0] == 45
+    let digits = if neg { text.slice(1, text.len()) } else { text }
+    match bytes.parse_u64(digits) {
+        Some(u) => {
+            if neg {
+                if u > 9223372036854775808 { return Err(err_at(path, String.from("a map key out of range"))) }
+                if u == 9223372036854775808 { return Ok(serial.VInt((0 - 9223372036854775807) - 1)) }
+                return Ok(serial.VInt((0 as i64) - (u as i64)))
+            }
+            if kind == UINT32 || kind == UINT64 || kind == FIXED32 || kind == FIXED64 { return Ok(serial.VUint(u)) }
+            if u > 9223372036854775807 { return Err(err_at(path, String.from("a map key out of range"))) }
+            Ok(serial.VInt(u as i64))
+        }
+        None => Err(err_at(path, String.from("an integer map key is its decimal text")))
+    }
+}
+
+fn enc_message(reg: Registry, m: Message, es: List[serial.Entry], inout out: List[u8], depth: usize, lim: Limits, path: List[u8]) -> Result[(), serial.Error] {
+    if depth > lim.max_depth { return Err(err_at(path, String.from("messages are nested too deeply"))) }
+    for f in m.fields {
+        let fpath = serial.path_field(path, f.name)
+        let v = match find_entry(es, f.name) {
+            Some(x) => x
+            None => serial.VNull
+        }
+        if f.shape == 2 {
+            // a map: entries { key = 1, value = 2 }
+            let items = match v {
+                serial.VMap(x) => x
+                serial.VNull => List.new()
+                _ => { return Err(bad_value(fpath, MESSAGE, "a map")) }
+            }
+            for e in items {
+                let epath = serial.path_field(fpath, e.key)
+                let mut ent: List[u8] = List.new()
+                put_tagged(inout ent, 1, f.key_kind, map_key_value(f.key_kind, e.key, epath)?, epath)?
+                if f.val_kind == MESSAGE {
+                    put_message_field(reg, inout ent, 2, f.msg, e.value, depth, lim, epath)?
+                } else {
+                    put_tagged(inout ent, 2, f.val_kind, e.value, epath)?
+                }
+                put_tag(inout out, f.num, WT_LEN)
+                put_varint(inout out, ent.len() as u64)
+                out.extend(ent)
+            }
+        } else if f.shape == 1 {
+            let items = match v {
+                serial.VList(x) => x
+                serial.VNull => List.new()
+                _ => { return Err(bad_value(fpath, f.kind, "a list")) }
+            }
+            if items.len() > lim.max_elements { return Err(err_at(fpath, String.from("too many elements"))) }
+            if f.packed && items.len() > 0 {
+                let mut body: List[u8] = List.new()
+                let mut i: usize = 0
+                for x in items {
+                    put_scalar(inout body, f.kind, x, serial.path_index(fpath, i))?
+                    i += 1
+                }
+                put_tag(inout out, f.num, WT_LEN)
+                put_varint(inout out, body.len() as u64)
+                out.extend(body)
+            } else if !f.packed {
+                let mut i: usize = 0
+                for x in items {
+                    let ipath = serial.path_index(fpath, i)
+                    if f.kind == MESSAGE {
+                        put_message_field(reg, inout out, f.num, f.msg, x, depth, lim, ipath)?
+                    } else {
+                        put_tagged(inout out, f.num, f.kind, x, ipath)?
+                    }
+                    i += 1
+                }
+            }
+        } else {
+            if f.kind == MESSAGE {
+                match v {
+                    serial.VNull => {}
+                    _ => { put_message_field(reg, inout out, f.num, f.msg, v, depth, lim, fpath)? }
+                }
+            } else if f.presence {
+                match v {
+                    serial.VNull => {}
+                    _ => { put_tagged(inout out, f.num, f.kind, v, fpath)? }
+                }
+            } else if !is_default(f.kind, v) {
+                put_tagged(inout out, f.num, f.kind, v, fpath)?
+            }
+        }
+    }
+    for o in m.oneofs {
+        let opath = serial.path_field(path, o.name)
+        match find_entry(es, o.name) {
+            Some(serial.VMap(one)) => {
+                // { variant: { value: x } }
+                if one.len() == 1 {
+                    let vname = one[0].key
+                    let inner = one[0].value
+                    let payload = match serial.member(inner, "value") {
+                        Some(x) => x
+                        None => serial.VNull
+                    }
+                    let mut found = false
+                    for f in o.variants {
+                        if bytes.eq(f.name, vname) {
+                            found = true
+                            let vpath = serial.path_field(opath, vname)
+                            if f.kind == MESSAGE {
+                                put_message_field(reg, inout out, f.num, f.msg, payload, depth, lim, vpath)?
+                            } else {
+                                put_tagged(inout out, f.num, f.kind, payload, vpath)?
+                            }
+                        }
+                    }
+                    if !found { return Err(err_at(opath, String.from("not a member of the oneof"))) }
+                }
+            }
+            _ => {}
+        }
+    }
+    // what an earlier decode did not know goes back unchanged
+    match find_entry(es, "unknown_fields".bytes()) {
+        Some(serial.VBytes(u)) => { out.extend(u) }
+        _ => {}
+    }
+    Ok(())
+}
+
+// ---- decoding: bytes and a schema to a serial.Value ----
+
+fn default_of(kind: i32) -> serial.Value {
+    if kind == INT32 || kind == INT64 || kind == SINT32 || kind == SINT64 || kind == SFIXED32 || kind == SFIXED64 || kind == ENUM { return serial.VInt(0) }
+    if kind == UINT32 || kind == UINT64 || kind == FIXED32 || kind == FIXED64 { return serial.VUint(0) }
+    if kind == BOOL { return serial.VBool(false) }
+    if kind == DOUBLE || kind == FLOAT { return serial.VFloat(0.0) }
+    if kind == STRING { return serial.VStr(List.new()) }
+    if kind == BYTES { return serial.VBytes(List.new()) }
+    serial.VNull
+}
+
+/// Where a field's payload is: `(start, end, next)`: for a varint or fixed field the value's bytes, for a
+/// length-delimited one the content; `next` is the position after the field. Groups are not here.
+fn extent(b: List[u8], q: usize, wt: u32, end: usize) -> Result[(usize, usize, usize), String] {
+    if wt == WT_VARINT {
+        let (v, nq) = get_varint(b, q)?
+        if nq > end { return Err(String.from("a truncated varint")) }
+        return Ok((q, nq, nq))
+    }
+    if wt == WT_I32 {
+        if q + 4 > end { return Err(String.from("a truncated fixed32")) }
+        return Ok((q, q + 4, q + 4))
+    }
+    if wt == WT_I64 {
+        if q + 8 > end { return Err(String.from("a truncated fixed64")) }
+        return Ok((q, q + 8, q + 8))
+    }
+    if wt == WT_LEN {
+        let (n, q2) = get_varint(b, q)?
+        if q2 > end || n > ((end - q2) as u64) { return Err(String.from("a length past the end of the message")) }
+        return Ok((q2, q2 + (n as usize), q2 + (n as usize)))
+    }
+    Err(String.from("an unsupported wire type"))
+}
+
+/// The position after the group that starts at `pos` (just after its start-group tag), tracking nesting.
+fn skip_group(b: List[u8], pos: usize, end: usize, num: u32, depth: usize) -> Result[usize, String] {
+    if depth > 100 { return Err(String.from("groups are nested too deeply")) }
+    let mut p = pos.copy()
+    while p < end {
+        let (t, q) = get_varint(b, p)?
+        let wt = (t & 7) as u32
+        let n = (t >> (3 as u64)) as u32
+        if wt == WT_EGROUP {
+            if n != num { return Err(String.from("an end-group tag that does not match")) }
+            return Ok(q)
+        }
+        if wt == WT_SGROUP {
+            p = skip_group(b, q, end, n, depth + 1)?
+        } else {
+            let (ps, pe, nx) = extent(b, q, wt, end)?
+            p = nx
+        }
+    }
+    Err(String.from("a group that is not closed"))
+}
+
+/// One scalar of `kind` from the payload `[ps, pe)` of a field with wire type `wt`; None when the wire type is not
+/// the kind's (the field is then unknown).
+fn dec_scalar(kind: i32, wt: u32, b: List[u8], ps: usize, pe: usize, path: List[u8]) -> Result[Option[serial.Value], serial.Error] {
+    if wt != wire_type_of(kind) { return Ok(None) }
+    if wt == WT_VARINT {
+        let r1_ = match get_varint(b, ps) {
+            Ok(x) => x
+            Err(e) => { return Err(err_at(path, e)) }
+        }
+        let (v, nq) = r1_
+        if kind == INT32 || kind == ENUM { return Ok(Some(serial.VInt(sx32((v & 0xffffffff) as u32) as i64))) }
+        if kind == INT64 { return Ok(Some(serial.VInt(from_bits64(v)))) }
+        if kind == UINT32 { return Ok(Some(serial.VUint(v & 0xffffffff))) }
+        if kind == UINT64 { return Ok(Some(serial.VUint(v))) }
+        if kind == SINT32 { return Ok(Some(serial.VInt(unzigzag64(v & 0xffffffff)))) }
+        if kind == SINT64 { return Ok(Some(serial.VInt(unzigzag64(v)))) }
+        return Ok(Some(serial.VBool(v != 0)))
+    }
+    if wt == WT_I32 {
+        let v = match get_fixed32(b, ps) {
+            Ok(x) => x
+            Err(e) => { return Err(err_at(path, e)) }
+        }
+        if kind == FIXED32 { return Ok(Some(serial.VUint(v as u64))) }
+        if kind == SFIXED32 { return Ok(Some(serial.VInt(sx32(v) as i64))) }
+        return Ok(Some(serial.VFloat(f32.from_bits(v) as f64)))
+    }
+    if wt == WT_I64 {
+        let v = match get_fixed64(b, ps) {
+            Ok(x) => x
+            Err(e) => { return Err(err_at(path, e)) }
+        }
+        if kind == FIXED64 { return Ok(Some(serial.VUint(v))) }
+        if kind == SFIXED64 { return Ok(Some(serial.VInt(from_bits64(v)))) }
+        return Ok(Some(serial.VFloat(f64.from_bits(v))))
+    }
+    // length-delimited: string or bytes
+    let s = b.slice(ps, pe)
+    if kind == STRING {
+        if !utf8.valid(s.copy()) { return Err(err_at(path, String.from("a string that is not valid UTF-8"))) }
+        return Ok(Some(serial.VStr(s)))
+    }
+    Ok(Some(serial.VBytes(s)))
+}
+
+/// A map key as text.
+fn key_text(kind: i32, v: serial.Value) -> List[u8] {
+    match v {
+        serial.VStr(s) => s
+        serial.VBool(x) => { if x { "true".bytes() } else { "false".bytes() } }
+        serial.VInt(n) => bytes.from_i64(n)
+        serial.VUint(u) => bytes.from_u64(u)
+        _ => List.new()
+    }
+}
+
+fn dec_message(reg: Registry, m: Message, b: List[u8], start: usize, end: usize, depth: usize, lim: Limits, path: List[u8]) -> Result[serial.Value, serial.Error] {
+    if depth > lim.max_depth { return Err(err_at(path, String.from("messages are nested too deeply"))) }
+    let nf = m.fields.len()
+    let mut vals: List[serial.Value] = List.new()
+    let mut seen: List[bool] = List.new()
+    let mut lists: List[List[serial.Value]] = List.new()
+    let mut raws: List[List[u8]] = List.new()
+    let mut maps: List[List[serial.Entry]] = List.new()
+    for f in m.fields {
+        vals.push(serial.VNull)
+        seen.push(false)
+        lists.push(List.new())
+        raws.push(List.new())
+        maps.push(List.new())
+    }
+    // oneofs: the variant seen last (-1: none), its value or the merged raw bytes of a message
+    let mut o_var: List[i64] = List.new()
+    let mut o_val: List[serial.Value] = List.new()
+    let mut o_raw: List[List[u8]] = List.new()
+    for o in m.oneofs {
+        o_var.push(-1)
+        o_val.push(serial.VNull)
+        o_raw.push(List.new())
+    }
+    let mut unknown: List[u8] = List.new()
+    let mut p = start.copy()
+    while p < end {
+        let tag_start = p.copy()
+        let r2_ = match get_varint(b, p) {
+            Ok(x) => x
+            Err(e) => { return Err(err_at(path, e)) }
+        }
+        let (t, q) = r2_
+        if q > end { return Err(err_at(path, String.from("a truncated tag"))) }
+        let num = t >> (3 as u64)
+        let wt = (t & 7) as u32
+        if num == 0 || num > 536870911 { return Err(err_at(path, String.from("a field number out of range"))) }
+        if wt == WT_SGROUP {
+            let nx = match skip_group(b, q, end, num as u32, 0) {
+                Ok(x) => x
+                Err(e) => { return Err(err_at(path, e)) }
+            }
+            unknown.extend(b.slice(tag_start, nx))
+            p = nx
+            continue
+        }
+        if wt == WT_EGROUP { return Err(err_at(path, String.from("an end-group tag without a start"))) }
+        let r3_ = match extent(b, q, wt, end) {
+            Ok(x) => x
+            Err(e) => { return Err(err_at(path, e)) }
+        }
+        let (ps, pe, nx) = r3_
+        // which field: a plain one, or a member of a oneof
+        let mut fi: i64 = -1
+        for i in 0..nf {
+            if (m.fields[i].num as u64) == num { fi = i as i64 }
+        }
+        let mut oi: i64 = -1
+        let mut oj: i64 = -1
+        if fi < 0 {
+            for k in 0..m.oneofs.len() {
+                for j in 0..m.oneofs[k].variants.len() {
+                    if (m.oneofs[k].variants[j].num as u64) == num {
+                        oi = k as i64
+                        oj = j as i64
+                    }
+                }
+            }
+        }
+        let mut taken = false
+        if fi >= 0 {
+            let idx = fi as usize
+            let f = m.fields[idx].copy()
+            let fpath = serial.path_field(path, f.name)
+            if f.shape == 2 {
+                if wt == WT_LEN {
+                    // an entry: key = 1, value = 2
+                    let mut kv: serial.Value = default_of(f.key_kind)
+                    let mut vv: serial.Value = default_of(f.val_kind)
+                    let mut vraw: List[u8] = List.new()
+                    let mut have_v = false
+                    let mut ip = ps.copy()
+                    while ip < pe {
+                        let r4_ = match get_varint(b, ip) {
+                            Ok(x) => x
+                            Err(e) => { return Err(err_at(fpath, e)) }
+                        }
+                        let (it, iq) = r4_
+                        let inum = it >> (3 as u64)
+                        let iwt = (it & 7) as u32
+                        let r5_ = match extent(b, iq, iwt, pe) {
+                            Ok(x) => x
+                            Err(e) => { return Err(err_at(fpath, e)) }
+                        }
+                        let (ips, ipe, inx) = r5_
+                        if inum == 1 {
+                            match dec_scalar(f.key_kind, iwt, b, ips, ipe, fpath)? {
+                                Some(x) => { kv = x }
+                                None => {}
+                            }
+                        } else if inum == 2 {
+                            if f.val_kind == MESSAGE {
+                                if iwt == WT_LEN {
+                                    vraw.extend(b.slice(ips, ipe))
+                                    have_v = true
+                                }
+                            } else {
+                                match dec_scalar(f.val_kind, iwt, b, ips, ipe, fpath)? {
+                                    Some(x) => { vv = x }
+                                    None => {}
+                                }
+                            }
+                        }
+                        ip = inx
+                    }
+                    let ktext = key_text(f.key_kind, kv)
+                    if f.val_kind == MESSAGE {
+                        let sub = match reg.find(f.msg) {
+                            Some(x) => x
+                            None => { return Err(err_at(fpath, String.from("a map value of an unknown message type"))) }
+                        }
+                        vv = dec_message(reg, sub, vraw, 0, vraw.len(), depth + 1, lim, serial.path_field(fpath, ktext))?
+                    }
+                    // a later entry with the same key replaces the earlier one
+                    let mut es: List[serial.Entry] = List.new()
+                    let mut replaced = false
+                    for e in maps[idx] {
+                        if bytes.eq(e.key, ktext) {
+                            es.push(serial.Entry(ktext.copy(), vv))
+                            replaced = true
+                        } else {
+                            es.push(e)
+                        }
+                    }
+                    if !replaced { es.push(serial.Entry(ktext, vv)) }
+                    if es.len() > lim.max_elements { return Err(err_at(fpath, String.from("too many map entries"))) }
+                    maps[idx] = es
+                    seen[idx] = true
+                    taken = true
+                }
+            } else if f.shape == 1 {
+                if f.kind == MESSAGE {
+                    if wt == WT_LEN {
+                        let sub = match reg.find(f.msg) {
+                            Some(x) => x
+                            None => { return Err(err_at(fpath, String.from("a field of an unknown message type"))) }
+                        }
+                        let v = dec_message(reg, sub, b, ps, pe, depth + 1, lim, serial.path_index(fpath, lists[idx].len()))?
+                        lists[idx].push(v)
+                        taken = true
+                    }
+                } else if f.kind == STRING || f.kind == BYTES {
+                    match dec_scalar(f.kind, wt, b, ps, pe, fpath)? {
+                        Some(x) => {
+                            lists[idx].push(x)
+                            taken = true
+                        }
+                        None => {}
+                    }
+                } else if wt == WT_LEN {
+                    // packed
+                    let nwt = wire_type_of(f.kind)
+                    let mut ip = ps.copy()
+                    while ip < pe {
+                        let r6_ = match extent(b, ip, nwt, pe) {
+                            Ok(x) => x
+                            Err(e) => { return Err(err_at(fpath, e)) }
+                        }
+                        let (ips, ipe, inx) = r6_
+                        match dec_scalar(f.kind, nwt, b, ips, ipe, fpath)? {
+                            Some(x) => { lists[idx].push(x) }
+                            None => {}
+                        }
+                        ip = inx
+                    }
+                    taken = true
+                } else {
+                    match dec_scalar(f.kind, wt, b, ps, pe, fpath)? {
+                        Some(x) => {
+                            lists[idx].push(x)
+                            taken = true
+                        }
+                        None => {}
+                    }
+                }
+                if lists[idx].len() > lim.max_elements { return Err(err_at(fpath, String.from("too many elements"))) }
+                if taken { seen[idx] = true }
+            } else if f.kind == MESSAGE {
+                if wt == WT_LEN {
+                    // two encodings of a message field are merged: their bytes are decoded together
+                    raws[idx].extend(b.slice(ps, pe))
+                    seen[idx] = true
+                    taken = true
+                }
+            } else {
+                match dec_scalar(f.kind, wt, b, ps, pe, fpath)? {
+                    Some(x) => {
+                        vals[idx] = x
+                        seen[idx] = true
+                        taken = true
+                    }
+                    None => {}
+                }
+            }
+        } else if oi >= 0 {
+            let k = oi as usize
+            let j = oj as usize
+            let f = m.oneofs[k].variants[j].copy()
+            let fpath = serial.path_field(serial.path_field(path, m.oneofs[k].name), f.name)
+            if f.kind == MESSAGE {
+                if wt == WT_LEN {
+                    if o_var[k] != oj { o_raw[k] = List.new() }
+                    o_raw[k].extend(b.slice(ps, pe))
+                    o_var[k] = oj
+                    taken = true
+                }
+            } else {
+                match dec_scalar(f.kind, wt, b, ps, pe, fpath)? {
+                    Some(x) => {
+                        o_var[k] = oj
+                        o_val[k] = x
+                        taken = true
+                    }
+                    None => {}
+                }
+            }
+        }
+        if !taken { unknown.extend(b.slice(tag_start, nx)) }
+        p = nx
+    }
+    // the record: every field present, absent ones with their defaults
+    let mut es: List[serial.Entry] = List.new()
+    for i in 0..nf {
+        let f = m.fields[i].copy()
+        let fpath = serial.path_field(path, f.name)
+        if f.shape == 2 {
+            es.push(serial.Entry(f.name.copy(), serial.VMap(maps[i].copy())))
+        } else if f.shape == 1 {
+            es.push(serial.Entry(f.name.copy(), serial.VList(lists[i].copy())))
+        } else if f.kind == MESSAGE {
+            if seen[i] {
+                let sub = match reg.find(f.msg) {
+                    Some(x) => x
+                    None => { return Err(err_at(fpath, String.from("a field of an unknown message type"))) }
+                }
+                let r = raws[i].copy()
+                es.push(serial.Entry(f.name.copy(), dec_message(reg, sub, r, 0, r.len(), depth + 1, lim, fpath)?))
+            } else {
+                es.push(serial.Entry(f.name.copy(), serial.VNull))
+            }
+        } else if seen[i] {
+            es.push(serial.Entry(f.name.copy(), vals[i].copy()))
+        } else if f.presence {
+            es.push(serial.Entry(f.name.copy(), serial.VNull))
+        } else {
+            es.push(serial.Entry(f.name.copy(), default_of(f.kind)))
+        }
+    }
+    for k in 0..m.oneofs.len() {
+        let o = m.oneofs[k].copy()
+        if o_var[k] < 0 {
+            es.push(serial.Entry(o.name.copy(), serial.VNull))
+        } else {
+            let f = o.variants[o_var[k] as usize].copy()
+            let mut payload = o_val[k].copy()
+            if f.kind == MESSAGE {
+                let sub = match reg.find(f.msg) {
+                    Some(x) => x
+                    None => { return Err(err_at(path, String.from("a oneof member of an unknown message type"))) }
+                }
+                let r = o_raw[k].copy()
+                payload = dec_message(reg, sub, r, 0, r.len(), depth + 1, lim, serial.path_field(serial.path_field(path, o.name), f.name))?
+            }
+            let mut inner: List[serial.Entry] = List.new()
+            inner.push(serial.Entry("value".bytes(), payload))
+            let mut one: List[serial.Entry] = List.new()
+            one.push(serial.Entry(f.name.copy(), serial.VMap(inner)))
+            es.push(serial.Entry(o.name.copy(), serial.VMap(one)))
+        }
+    }
+    es.push(serial.Entry("unknown_fields".bytes(), serial.VBytes(unknown)))
+    Ok(serial.VMap(es))
+}
+
+// ---- typed access ----
+
+fn message_named(reg: Registry, name: str) -> Result[Message, serial.Error] {
+    match reg.find(name.bytes()) {
+        Some(m) => Ok(m)
+        None => {
+            let mut w = String.from("no message called ")
+            w.push_str(name)
+            Err(serial.error_at(List.new(), w.bytes()))
+        }
+    }
+}
+
+/// `x` (a type that is `Serialize`: a generated message) as the wire form of the message `msg` of `reg`.
+pub fn encode[T: serial.Serialize](reg: Registry, msg: str, x: T) -> Result[List[u8], serial.Error] {
+    encode_with(reg, msg, x, limits())
+}
+
+pub fn encode_with[T: serial.Serialize](reg: Registry, msg: str, x: T, lim: Limits) -> Result[List[u8], serial.Error] {
+    let m = message_named(reg, msg)?
+    let v = serial.to_value(x)?
+    let es = match v {
+        serial.VMap(e) => e
+        _ => { return Err(serial.error("a message is a record")) }
+    }
+    let mut out: List[u8] = List.new()
+    enc_message(reg, m, es, inout out, 0, lim, List.new())?
+    if out.len() > lim.max_bytes { return Err(serial.error("the message is larger than the limit")) }
+    Ok(out)
+}
+
+/// The message `msg` of `reg` in `b`, as a value of type T (a generated message).
+pub fn decode[T: serial.Deserialize](reg: Registry, msg: str, b: List[u8]) -> Result[T, serial.Error] {
+    decode_with(reg, msg, b, limits())
+}
+
+pub fn decode_with[T: serial.Deserialize](reg: Registry, msg: str, b: List[u8], lim: Limits) -> Result[T, serial.Error] {
+    if b.len() > lim.max_bytes { return Err(serial.error("the input is larger than the limit")) }
+    let m = message_named(reg, msg)?
+    let v = dec_message(reg, m, b, 0, b.len(), 0, lim, List.new())?
+    serial.from_value(v)
+}
+
+/// The message `msg` in `b` as a `serial.Value` (names and values, no Eider type).
+pub fn decode_value(reg: Registry, msg: str, b: List[u8]) -> Result[serial.Value, serial.Error] {
+    let m = message_named(reg, msg)?
+    dec_message(reg, m, b, 0, b.len(), 0, limits(), List.new())
+}
+
+/// A `serial.Value` (a record: what `serial.to_value` gives for a message) as the wire form of `msg`.
+pub fn encode_value(reg: Registry, msg: str, v: serial.Value) -> Result[List[u8], serial.Error] {
+    let m = message_named(reg, msg)?
+    let es = match v {
+        serial.VMap(e) => e
+        _ => { return Err(serial.error("a message is a record")) }
+    }
+    let mut out: List[u8] = List.new()
+    enc_message(reg, m, es, inout out, 0, limits(), List.new())?
+    Ok(out)
+}

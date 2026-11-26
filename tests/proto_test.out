@@ -1,0 +1,64 @@
+-- varints
+00
+01
+7f
+8001
+ac02
+808001
+ffffffff0f
+ffffffffffffffffff01
+a truncated varint
+a varint is longer than 64 bits
+a varint is longer than 64 bits
+a varint is longer than 64 bits
+-- zigzag
+0
+1
+2
+3
+4294967294
+4294967295
+-- the example of the protobuf documentation
+0a084a6f686e20446f6510d2091a106a646f65406578616d706c652e636f6d
+name=John Doe
+id=1234
+-- every kind, nested, repeated, maps, oneof
+0a0178200128ffffffffffffffffff0130fbffffffffffffffff01380540ff9fd9e61d4d00286bee51f7ffffffffffffff590000000000000440650000c03f6a0300ff10720161720262637a0d01ffffffffffffffffff01ac028001078001088a010208018a0100920100980100a201050a016b1005aa010f08f9ffffffffffffffff01120208098202020804
+re-encoded identically
+zz=-3
+neg=-5
+big=18446744073709551615
+nums=3
+opt present=true
+inner present=true
+shape is box=4
+map key -7=true
+-- an empty message is empty on the wire, and decodes to the defaults
+
+defaults: id=0
+inner absent=true
+-- unknown fields survive a round trip
+name=x
+unknown bytes kept=20
+0a0178a00607aa06026869b50601020304bb060805bc06
+unknown fields written back
+id=0
+kept=12026869
+-- merging: later scalars win, repeated append, message fields merge
+id=2
+name=b
+inner=absent
+inner merged=7
+packed in two pieces and unpacked: nums=2
+-- malformed
+  a truncated varint
+  a length past the end of the message
+  a truncated varint
+  name: a string that is not valid UTF-8
+  a field number out of range
+  a group that is not closed
+  an end-group tag without a start
+  a truncated varint
+  a truncated fixed32
+  a truncated fixed64
+  nums: a truncated varint
