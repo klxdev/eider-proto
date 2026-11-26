@@ -1,0 +1,37 @@
+// header comment
+syntax = "proto3";
+package demo.v1;
+import "google/protobuf/timestamp.proto";
+import public "other.proto";
+option go_package = "example.com/demo";
+option (gogoproto.goproto_getters_all) = false;
+/* block
+   comment */
+message Outer {
+  option deprecated = true;
+  reserved 5, 9 to 11;
+  reserved "old";
+  enum Kind { KIND_UNKNOWN = 0; KIND_A = 1 [(gogoproto.enumvalue_customname) = "A"]; option allow_alias = true; }
+  message Inner { int32 n = 1; }
+  string name = 1 [(gogoproto.customname) = "Name", (gogoproto.nullable) = false];
+  repeated int64 ids = 2 [packed = false];
+  map<string, Inner> by_name = 3;
+  optional bool flag = 4;
+  Kind kind = 6;
+  oneof body {
+    string text = 7;
+    Inner inner = 8;
+    option (x.y) = { a: 1 b: "c" };
+  }
+  google.protobuf.Timestamp when = 12;
+  bytes data = 13 [json_name = "d"];
+}
+service Demo {
+  option (google.api.default_host) = "x";
+  rpc Unary(Outer) returns (Outer);
+  rpc Down(Outer) returns (stream Outer) { option deprecated = true; }
+  rpc Up(stream Outer) returns (Outer);
+  rpc Both(stream Outer) returns (stream Outer);
+}
+extend Outer { int32 ext = 100; }
+

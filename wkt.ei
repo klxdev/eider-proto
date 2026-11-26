@@ -1,0 +1,16 @@
+//! proto/wkt: the `.proto` text of the well-known types that generated code imports (`google/protobuf/...`): `Any`,
+//! `Timestamp`, `Duration`, `Empty`, `FieldMask` and the wrapper messages. They are ordinary messages here (a
+//! `Timestamp` is `{ seconds: i64, nanos: i32 }`); `Struct`, `Value` and `ListValue` are recursive and not included.
+
+/// The text of the well-known file `path` (`google/protobuf/timestamp.proto`), None for any other path.
+pub fn source(path: String) -> Option[String] {
+    if path == String.from("google/protobuf/any.proto") { return Some(String.from("syntax = \"proto3\";\npackage google.protobuf;\nmessage Any {{ string type_url = 1; bytes value = 2; }}\n")) }
+    if path == String.from("google/protobuf/timestamp.proto") { return Some(String.from("syntax = \"proto3\";\npackage google.protobuf;\nmessage Timestamp {{ int64 seconds = 1; int32 nanos = 2; }}\n")) }
+    if path == String.from("google/protobuf/duration.proto") { return Some(String.from("syntax = \"proto3\";\npackage google.protobuf;\nmessage Duration {{ int64 seconds = 1; int32 nanos = 2; }}\n")) }
+    if path == String.from("google/protobuf/empty.proto") { return Some(String.from("syntax = \"proto3\";\npackage google.protobuf;\nmessage Empty {{}}\n")) }
+    if path == String.from("google/protobuf/field_mask.proto") { return Some(String.from("syntax = \"proto3\";\npackage google.protobuf;\nmessage FieldMask {{ repeated string paths = 1; }}\n")) }
+    if path == String.from("google/protobuf/wrappers.proto") {
+        return Some(String.from("syntax = \"proto3\";\npackage google.protobuf;\nmessage DoubleValue {{ double value = 1; }}\nmessage FloatValue {{ float value = 1; }}\nmessage Int64Value {{ int64 value = 1; }}\nmessage UInt64Value {{ uint64 value = 1; }}\nmessage Int32Value {{ int32 value = 1; }}\nmessage UInt32Value {{ uint32 value = 1; }}\nmessage BoolValue {{ bool value = 1; }}\nmessage StringValue {{ string value = 1; }}\nmessage BytesValue {{ bytes value = 1; }}\n"))
+    }
+    None
+}

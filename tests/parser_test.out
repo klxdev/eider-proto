@@ -1,0 +1,31 @@
+demo.v1
+2
+1
+Outer
+9
+1
+1
+2
+name 1 string label=0 oneof= map=, packed=-1
+ids 2 int64 label=1 oneof= map=, packed=0
+by_name 3  label=1 oneof= map=string,Inner packed=-1
+flag 4 bool label=2 oneof= map=, packed=-1
+kind 6 Kind label=0 oneof= map=, packed=-1
+text 7 string label=0 oneof=body map=, packed=-1
+inner 8 Inner label=0 oneof=body map=, packed=-1
+when 12 google.protobuf.Timestamp label=0 oneof= map=, packed=-1
+data 13 bytes label=0 oneof= map=, packed=-1
+Unary  
+Down  stream
+Up stream 
+Both stream stream
+-- refused
+line 1, column 24: a field number out of range (at `;`)
+line 1, column 25: expected `;` (at `}`)
+line 1, column 13: groups are not supported (at `group`)
+line 1, column 25: a message that is not closed
+line 1, column 10: expected a string (at `proto3`)
+line 1, column 23: expected `,` (at `>`)
+line 1, column 30: expected `(` (at `A`)
+line 1, column 24: expected an integer (at `x`)
+line 1, column 8: a comment that is not closed

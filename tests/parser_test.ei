@@ -1,0 +1,59 @@
+// proto/parser and proto/gen: a file with every construct, gogoproto options, comments and streaming rpcs; and what
+// is refused, with its line and column.
+
+import std.fs
+import std.io
+import proto.parser
+import proto.gen
+
+fn say(s: String) uses io { io.outln(s.bytes()) }
+
+fn main() uses io, fs {
+    let src = fs.read("tests/parser_sample.proto".bytes()).unwrap()
+    match parser.parse(String.from("demo.proto"), src) {
+        Ok(f) => {
+            say(f.package.copy())
+            say(f.imports.len().to_string())
+            say(f.public_imports.len().to_string())
+            let m = f.messages[0].copy()
+            say(m.name.copy())
+            say(m.fields.len().to_string())
+            say(m.oneofs.len().to_string())
+            say(m.messages.len().to_string())
+            say(m.enums[0].values.len().to_string())
+            for fl in m.fields {
+                let mut l = fl.name.copy()
+                l.push_str(" ")
+                l.append(fl.num.to_string())
+                l.push_str(" ")
+                l.append(fl.typ.copy())
+                l.push_str(" label=")
+                l.append(fl.label.to_string())
+                l.push_str(" oneof=")
+                l.append(fl.oneof.copy())
+                l.push_str(" map=")
+                l.append(fl.map_key.copy())
+                l.push_str(",")
+                l.append(fl.map_val.copy())
+                l.push_str(" packed=")
+                l.append(fl.packed.to_string())
+                say(l)
+            }
+            for r in f.services[0].rpcs {
+                let mut l = r.name.copy()
+                l.push_str(if r.client_stream { " stream" } else { " " })
+                l.push_str(if r.server_stream { " stream" } else { " " })
+                say(l)
+            }
+        }
+        Err(e) => { say(e) }
+    }
+
+    say(String.from("-- refused"))
+    for bad in List[r#"message A { int32 x = 0; }"#, r#"message A { int32 x = 1 }"#, r#"message A { group G = 1 { } }"#, r#"message A { int32 x = 1;"#, r#"syntax = proto3;"#, r#"message A { map<string> m = 1; }"#, r#"service S { rpc M(A) returns A; }"#, r#"message A { string s = "x"; }"#, r#"/* open"#] {
+        match parser.parse(String.from("bad.proto"), bad.bytes()) {
+            Ok(f) => { say(String.from("accepted")) }
+            Err(e) => { say(e) }
+        }
+    }
+}

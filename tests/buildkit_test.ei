@@ -1,0 +1,39 @@
+// The generated BuildKit types (tests/buildkit/, from control.proto and what it imports, by tools/protoc_eider.ei):
+// a SolveRequest with a definition, maps, a nested cache option and an unknown field goes to bytes and back.
+
+import std.bytes
+import std.encoding
+import std.io
+import std.serial
+import proto
+import proto.tests.buildkit.api_services_control_control as ctl
+import proto.tests.buildkit.github_com_moby_buildkit_solver_pb_ops as ops
+
+fn say(s: String) uses io { io.outln(s.bytes()) }
+
+fn main() uses io {
+    let reg = ctl.registry()
+    let mut attrs: Map[String, String] = Map.new()
+    attrs.insert(String.from("filename"), String.from("Dockerfile"))
+    let def = ops.Definition(List[serial.Bytes("abc".bytes()), serial.Bytes(List.new())], Map.new(), None, serial.Bytes(List.new()))
+    let mut req = ctl.SolveRequest(String.from("ref-1"), Some(def), String.from(""), Map.new(), String.from("sess"), String.from("dockerfile.v0"), attrs, None, List[String.from("network.host")], Map.new(), false, None, List.new(), true, String.from(""), 7, false, serial.Bytes(List.new()))
+    let wire = ctl.encode_solve_request(reg, req).unwrap()
+    say(encoding.hex(wire.copy()))
+    let back = ctl.decode_solve_request(reg, wire.copy()).unwrap()
+    say(back.ref_.copy())
+    say(back.frontend_attrs.get(String.from("filename")).unwrap())
+    say(back.entitlements[0].copy())
+    say(back.compatibility_version.to_string())
+    say(back.definition.unwrap().def.len().to_string())
+    let again = ctl.encode_solve_request(reg, back).unwrap()
+    say(String.from(if bytes.eq(again, wire) { "re-encoded identically" } else { "DIFFERENT" }))
+    // an unknown field (number 900, varint 5) after the known ones survives the decode and the encode
+    let mut extra = wire.copy()
+    extra.push(160)
+    extra.push(56)
+    extra.push(5)
+    let b2 = ctl.decode_solve_request(reg, extra.copy()).unwrap()
+    say(b2.unknown_fields.data.len().to_string())
+    let e2 = ctl.encode_solve_request(reg, b2).unwrap()
+    say(String.from(if bytes.eq(e2, extra) { "unknown field written back" } else { "LOST" }))
+}

@@ -33,6 +33,7 @@
 import std.bytes
 import std.math
 import std.serial
+import std.strings
 import std.utf8
 
 // ---- wire types and field kinds ----
@@ -1000,23 +1001,23 @@ fn dec_message(reg: Registry, m: Message, b: List[u8], start: usize, end: usize,
 
 // ---- typed access ----
 
-fn message_named(reg: Registry, name: str) -> Result[Message, serial.Error] {
-    match reg.find(name.bytes()) {
+fn message_named[N: strings.Text](reg: Registry, name: N) -> Result[Message, serial.Error] {
+    match reg.find(name.text().bytes()) {
         Some(m) => Ok(m)
         None => {
             let mut w = String.from("no message called ")
-            w.push_str(name)
+            w.append(name.text())
             Err(serial.error_at(List.new(), w.bytes()))
         }
     }
 }
 
 /// `x` (a type that is `Serialize`: a generated message) as the wire form of the message `msg` of `reg`.
-pub fn encode[T: serial.Serialize](reg: Registry, msg: str, x: T) -> Result[List[u8], serial.Error] {
+pub fn encode[T: serial.Serialize, N: strings.Text](reg: Registry, msg: N, x: T) -> Result[List[u8], serial.Error] {
     encode_with(reg, msg, x, limits())
 }
 
-pub fn encode_with[T: serial.Serialize](reg: Registry, msg: str, x: T, lim: Limits) -> Result[List[u8], serial.Error] {
+pub fn encode_with[T: serial.Serialize, N: strings.Text](reg: Registry, msg: N, x: T, lim: Limits) -> Result[List[u8], serial.Error] {
     let m = message_named(reg, msg)?
     let v = serial.to_value(x)?
     let es = match v {
@@ -1030,11 +1031,11 @@ pub fn encode_with[T: serial.Serialize](reg: Registry, msg: str, x: T, lim: Limi
 }
 
 /// The message `msg` of `reg` in `b`, as a value of type T (a generated message).
-pub fn decode[T: serial.Deserialize](reg: Registry, msg: str, b: List[u8]) -> Result[T, serial.Error] {
+pub fn decode[T: serial.Deserialize, N: strings.Text](reg: Registry, msg: N, b: List[u8]) -> Result[T, serial.Error] {
     decode_with(reg, msg, b, limits())
 }
 
-pub fn decode_with[T: serial.Deserialize](reg: Registry, msg: str, b: List[u8], lim: Limits) -> Result[T, serial.Error] {
+pub fn decode_with[T: serial.Deserialize, N: strings.Text](reg: Registry, msg: N, b: List[u8], lim: Limits) -> Result[T, serial.Error] {
     if b.len() > lim.max_bytes { return Err(serial.error("the input is larger than the limit")) }
     let m = message_named(reg, msg)?
     let v = dec_message(reg, m, b, 0, b.len(), 0, lim, List.new())?
@@ -1042,13 +1043,13 @@ pub fn decode_with[T: serial.Deserialize](reg: Registry, msg: str, b: List[u8], 
 }
 
 /// The message `msg` in `b` as a `serial.Value` (names and values, no Eider type).
-pub fn decode_value(reg: Registry, msg: str, b: List[u8]) -> Result[serial.Value, serial.Error] {
+pub fn decode_value[N: strings.Text](reg: Registry, msg: N, b: List[u8]) -> Result[serial.Value, serial.Error] {
     let m = message_named(reg, msg)?
     dec_message(reg, m, b, 0, b.len(), 0, limits(), List.new())
 }
 
 /// A `serial.Value` (a record: what `serial.to_value` gives for a message) as the wire form of `msg`.
-pub fn encode_value(reg: Registry, msg: str, v: serial.Value) -> Result[List[u8], serial.Error] {
+pub fn encode_value[N: strings.Text](reg: Registry, msg: N, v: serial.Value) -> Result[List[u8], serial.Error] {
     let m = message_named(reg, msg)?
     let es = match v {
         serial.VMap(e) => e

@@ -1,0 +1,528 @@
+//! proto/parser: a `.proto` parser (proto3, and the proto2 syntax that shows up in files that proto3 ones import).
+//!
+//!     let f = parser.parse("api/control.proto", text_bytes)?
+//!     // f.package, f.imports, f.messages (nested ones inside), f.enums, f.services
+//!
+//! What it reads: `syntax`, `package`, `import` (also `public` and `weak`), `message` (fields, `map<K, V>`, `oneof`, nested
+//! messages and enums, `reserved`, `optional`, `repeated`, field options in `[...]`), `enum` (with `reserved` and options),
+//! `service` with `rpc` (unary and streaming, in either direction), `option` statements and `extend` blocks. Options are
+//! parsed and mostly ignored: **gogoproto options and any other option in parentheses are tolerated** (including
+//! aggregate values `{ ... }`), and `deprecated`, `json_name` and `packed` are kept where they change the code or the
+//! wire (`packed = false`). Anything else is a syntax error with the line and column.
+//!
+//! Names stay as written (`foo.Bar` is a reference to be resolved against the files it was imported from, by
+//! `proto/gen`). Pure Eider; no capability.
+
+import std.bytes
+import std.strings
+
+/// A field of a message. `typ` is a scalar name (`int32`, `string`, ...) or a type name as written (`Inner`,
+/// `pkg.Other`, `.pkg.Other`); for a map, `map_key` and `map_val` are set (and `typ` is empty). `label`: 0 singular,
+/// 1 repeated, 2 optional (`optional`, with presence). `oneof` is the oneof's name ("" if none). `packed`: -1 default,
+/// 0 `packed = false`, 1 `packed = true`.
+pub type Field = { name: String, num: u32, typ: String, label: i32, oneof: String, map_key: String, map_val: String, packed: i32, line: u32 }
+
+pub type EnumValue = { name: String, num: i64 }
+
+pub type Enum = { name: String, values: List[EnumValue] }
+
+pub type Message = { name: String, fields: List[Field], oneofs: List[String], messages: List[Message], enums: List[Enum] }
+
+pub type Rpc = { name: String, input: String, output: String, client_stream: bool, server_stream: bool }
+
+pub type Service = { name: String, rpcs: List[Rpc] }
+
+pub type File = {
+    path: String,
+    syntax: String,
+    package: String,
+    imports: List[String],
+    public_imports: List[String],
+    messages: List[Message],
+    enums: List[Enum],
+    services: List[Service],
+}
+
+// ---- tokens ----
+
+/// kind: 0 end, 1 identifier (dots included: `a.b.C`), 2 integer, 3 string, 4 symbol, 5 float
+type Tok = { kind: i32, text: String, line: u32, col: u32, num: i64 }
+
+type Lexer = { src: List[u8], pos: usize, line: u32, col: u32 }
+
+fn is_ident_start(c: u8) -> bool { (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 95 }
+fn is_digit(c: u8) -> bool { c >= 48 && c <= 57 }
+
+fn lerr(lx: Lexer, why: str) -> String {
+    let mut m = String.from("line ")
+    m.append(lx.line.to_string())
+    m.push_str(", column ")
+    m.append(lx.col.to_string())
+    m.push_str(": ")
+    m.push_str(why)
+    m
+}
+
+impl Lexer {
+    fn peek_byte(self) -> u8 { if self.pos < self.src.len() { self.src[self.pos] } else { 0 } }
+
+    fn bump(inout self) {
+        if self.pos < self.src.len() {
+            if self.src[self.pos] == 10 {
+                self.line += 1
+                self.col = 1
+            } else {
+                self.col += 1
+            }
+            self.pos += 1
+        }
+    }
+
+    /// Skips white space and comments.
+    fn skip(inout self) -> Result[(), String] {
+        while self.pos < self.src.len() {
+            let c = self.src[self.pos].copy()
+            if c == 32 || c == 9 || c == 10 || c == 13 {
+                self.bump()
+            } else if c == 47 && self.pos + 1 < self.src.len() && self.src[self.pos + 1] == 47 {
+                while self.pos < self.src.len() && self.src[self.pos] != 10 { self.bump() }
+            } else if c == 47 && self.pos + 1 < self.src.len() && self.src[self.pos + 1] == 42 {
+                self.bump()
+                self.bump()
+                let mut closed = false
+                while self.pos < self.src.len() && !closed {
+                    if self.src[self.pos] == 42 && self.pos + 1 < self.src.len() && self.src[self.pos + 1] == 47 {
+                        self.bump()
+                        closed = true
+                    }
+                    self.bump()
+                }
+                if !closed { return Err(lerr(self.copy(), "a comment that is not closed")) }
+            } else {
+                break
+            }
+        }
+        Ok(())
+    }
+
+    fn next(inout self) -> Result[Tok, String] {
+        self.skip()?
+        let line = self.line.copy()
+        let col = self.col.copy()
+        if self.pos >= self.src.len() { return Ok(Tok(0, String.from(""), line, col, 0)) }
+        let c = self.src[self.pos].copy()
+        if is_ident_start(c) {
+            let start = self.pos.copy()
+            while self.pos < self.src.len() && (is_ident_start(self.src[self.pos]) || is_digit(self.src[self.pos]) || self.src[self.pos] == 46) { self.bump() }
+            let t = String.from_bytes(self.src.slice(start, self.pos)).unwrap()
+            return Ok(Tok(1, t, line, col, 0))
+        }
+        if is_digit(c) || (c == 46 && self.pos + 1 < self.src.len() && is_digit(self.src[self.pos + 1])) {
+            let start = self.pos.copy()
+            let mut hex = false
+            let mut float = false
+            if c == 48 && self.pos + 1 < self.src.len() && (self.src[self.pos + 1] == 120 || self.src[self.pos + 1] == 88) {
+                hex = true
+                self.bump()
+                self.bump()
+            }
+            while self.pos < self.src.len() {
+                let d = self.src[self.pos]
+                if is_digit(d) || (hex && ((d >= 97 && d <= 102) || (d >= 65 && d <= 70))) {
+                    self.bump()
+                } else if !hex && (d == 46 || d == 101 || d == 69 || ((d == 43 || d == 45) && (self.src[self.pos - 1] == 101 || self.src[self.pos - 1] == 69))) {
+                    float = true
+                    self.bump()
+                } else {
+                    break
+                }
+            }
+            let text = String.from_bytes(self.src.slice(start, self.pos)).unwrap()
+            if float { return Ok(Tok(5, text, line, col, 0)) }
+            let mut n: i64 = 0
+            let digits = if hex { self.src.slice(start + 2, self.pos) } else { self.src.slice(start, self.pos) }
+            let base: i64 = if hex { 16 } else if digits.len() > 1 && digits[0] == 48 { 8 } else { 10 }
+            for d in digits {
+                let v: i64 = if d >= 97 { (d as i64) - 87 } else if d >= 65 { (d as i64) - 55 } else { (d as i64) - 48 }
+                if v >= base { return Err(lerr(self.copy(), "a bad digit in a number")) }
+                if n > 922337203685477580 { return Err(lerr(self.copy(), "a number out of range")) }
+                n = n * base + v
+            }
+            return Ok(Tok(2, text, line, col, n))
+        }
+        if c == 34 || c == 39 {
+            let q = c.copy()
+            self.bump()
+            let mut out: List[u8] = List.new()
+            while true {
+                if self.pos >= self.src.len() { return Err(lerr(self.copy(), "a string that is not closed")) }
+                let d = self.src[self.pos]
+                if d == q {
+                    self.bump()
+                    break
+                }
+                if d == 10 { return Err(lerr(self.copy(), "a string that is not closed")) }
+                if d == 92 {
+                    self.bump()
+                    let e = self.peek_byte()
+                    self.bump()
+                    if e == 110 { out.push(10) }
+                    else if e == 116 { out.push(9) }
+                    else if e == 114 { out.push(13) }
+                    else if e == 48 { out.push(0) }
+                    else { out.push(e) }
+                } else {
+                    out.push(d)
+                    self.bump()
+                }
+            }
+            return Ok(Tok(3, String.from_bytes(out).unwrap_or(String.from("")), line, col, 0))
+        }
+        self.bump()
+        let mut s: List[u8] = List.new()
+        s.push(c)
+        Ok(Tok(4, String.from_bytes(s).unwrap_or(String.from("?")), line, col, 0))
+    }
+}
+
+// ---- the parser ----
+
+type P = { lx: Lexer, tok: Tok, ahead: Option[Tok] }
+
+fn perr(t: Tok, why: str) -> String { perr_s(t, String.from(why)) }
+
+fn perr_s(t: Tok, why: String) -> String {
+    let mut m = String.from("line ")
+    m.append(t.line.to_string())
+    m.push_str(", column ")
+    m.append(t.col.to_string())
+    m.push_str(": ")
+    m.append(why)
+    if t.kind != 0 {
+        m.push_str(" (at `")
+        m.append(t.text.copy())
+        m.push_str("`)")
+    }
+    m
+}
+
+impl P {
+    fn advance(inout self) -> Result[(), String] {
+        self.tok = self.lx.next()?
+        Ok(())
+    }
+
+    fn is_sym(self, s: str) -> bool { self.tok.kind == 4 && self.tok.text == String.from(s) }
+    fn is_word(self, s: str) -> bool { self.tok.kind == 1 && self.tok.text == String.from(s) }
+
+    fn expect_sym(inout self, s: str) -> Result[(), String] {
+        if !self.is_sym(s) {
+            let mut m = String.from("expected `")
+            m.push_str(s)
+            m.push_str("`")
+            return Err(perr_s(self.tok.copy(), m))
+        }
+        self.advance()
+    }
+
+    fn ident(inout self, what: str) -> Result[String, String] {
+        if self.tok.kind != 1 {
+            let mut m = String.from("expected ")
+            m.push_str(what)
+            return Err(perr_s(self.tok.copy(), m))
+        }
+        let t = self.tok.text.copy()
+        self.advance()?
+        Ok(t)
+    }
+
+    fn string(inout self) -> Result[String, String] {
+        if self.tok.kind != 3 { return Err(perr(self.tok.copy(), "expected a string")) }
+        let t = self.tok.text.copy()
+        self.advance()?
+        Ok(t)
+    }
+
+    fn int(inout self) -> Result[i64, String] {
+        let mut neg = false
+        if self.is_sym("-") {
+            neg = true
+            self.advance()?
+        }
+        if self.tok.kind != 2 { return Err(perr(self.tok.copy(), "expected an integer")) }
+        let n = self.tok.num.copy()
+        self.advance()?
+        Ok(if neg { 0 - n } else { n })
+    }
+
+    /// Skips tokens up to and including the `;` that ends the statement (braces and brackets balanced).
+    fn skip_statement(inout self) -> Result[(), String] {
+        let mut depth: i32 = 0
+        while self.tok.kind != 0 {
+            if self.is_sym(r"{") || self.is_sym("[") || self.is_sym("(") { depth += 1 }
+            if self.is_sym(r"}") || self.is_sym("]") || self.is_sym(")") { depth -= 1 }
+            if depth <= 0 && self.is_sym(";") {
+                self.advance()?
+                return Ok(())
+            }
+            // a statement that is a block (`option x = { ... }` has a `;` after it, an rpc body does not)
+            self.advance()?
+            if depth == 0 && self.is_sym(r"}") { return Ok(()) }
+        }
+        Err(perr(self.tok.copy(), "a statement that is not closed"))
+    }
+
+    /// `[ ... ]` field options: only `packed` matters.
+    fn field_options(inout self) -> Result[i32, String] {
+        let mut packed: i32 = -1
+        self.expect_sym("[")?
+        while !self.is_sym("]") {
+            if self.tok.kind == 0 { return Err(perr(self.tok.copy(), "field options that are not closed")) }
+            let is_packed = self.is_word("packed")
+            // a name (maybe `(ext).sub`), `=`, a value (a constant, a string or an aggregate in braces)
+            let mut depth: i32 = 0
+            let mut after_eq = false
+            let mut value_text = String.from("")
+            while self.tok.kind != 0 {
+                if depth == 0 && (self.is_sym(",") || self.is_sym("]")) { break }
+                if self.is_sym(r"{") || self.is_sym("(") { depth += 1 }
+                if self.is_sym(r"}") || self.is_sym(")") { depth -= 1 }
+                if self.is_sym("=") && depth == 0 { after_eq = true } else if after_eq && depth == 0 { value_text = self.tok.text.copy() }
+                self.advance()?
+            }
+            if is_packed { packed = if value_text == String.from("false") { 0 } else { 1 } }
+            if self.is_sym(",") { self.advance()? }
+        }
+        self.expect_sym("]")?
+        Ok(packed)
+    }
+
+    fn parse_field(inout self, label: i32, oneof: String) -> Result[Field, String] {
+        let line = self.tok.line.copy()
+        let typ = self.ident("a field type")?
+        let name = self.ident("a field name")?
+        self.expect_sym("=")?
+        let n = self.int()?
+        if n < 1 || n > 536870911 { return Err(perr(self.tok.copy(), "a field number out of range")) }
+        let mut packed: i32 = -1
+        if self.is_sym("[") { packed = self.field_options()? }
+        self.expect_sym(";")?
+        Ok(Field(name, n as u32, typ, label, oneof, String.from(""), String.from(""), packed, line))
+    }
+
+    fn parse_enum(inout self) -> Result[Enum, String] {
+        let name = self.ident("an enum name")?
+        self.expect_sym(r"{")?
+        let mut vals: List[EnumValue] = List.new()
+        while !self.is_sym(r"}") {
+            if self.tok.kind == 0 { return Err(perr(self.tok.copy(), "an enum that is not closed")) }
+            if self.is_word("option") || self.is_word("reserved") {
+                self.skip_statement()?
+            } else if self.is_sym(";") {
+                self.advance()?
+            } else {
+                let vn = self.ident("an enum value name")?
+                self.expect_sym("=")?
+                let n = self.int()?
+                if self.is_sym("[") {
+                    let z = self.field_options()?
+                }
+                self.expect_sym(";")?
+                vals.push(EnumValue(vn, n))
+            }
+        }
+        self.expect_sym(r"}")?
+        Ok(Enum(name, vals))
+    }
+
+    fn parse_message(inout self) -> Result[Message, String] {
+        let name = self.ident("a message name")?
+        self.expect_sym(r"{")?
+        let mut m = Message(name, List.new(), List.new(), List.new(), List.new())
+        while !self.is_sym(r"}") {
+            if self.tok.kind == 0 { return Err(perr(self.tok.copy(), "a message that is not closed")) }
+            if self.is_sym(";") {
+                self.advance()?
+            } else if self.is_word("message") {
+                self.advance()?
+                let inner = self.parse_message()?
+                m.messages.push(inner)
+            } else if self.is_word("enum") {
+                self.advance()?
+                let e = self.parse_enum()?
+                m.enums.push(e)
+            } else if self.is_word("option") || self.is_word("reserved") || self.is_word("extensions") {
+                self.skip_statement()?
+            } else if self.is_word("extend") {
+                self.advance()?
+                let z = self.ident("a type name")?
+                self.skip_block()?
+            } else if self.is_word("oneof") {
+                self.advance()?
+                let on = self.ident("a oneof name")?
+                self.expect_sym(r"{")?
+                m.oneofs.push(on.copy())
+                while !self.is_sym(r"}") {
+                    if self.tok.kind == 0 { return Err(perr(self.tok.copy(), "a oneof that is not closed")) }
+                    if self.is_word("option") {
+                        self.skip_statement()?
+                    } else {
+                        let f = self.parse_field(0, on.copy())?
+                        m.fields.push(f)
+                    }
+                }
+                self.expect_sym(r"}")?
+            } else if self.is_word("map") {
+                // map<K, V> name = N [opts];
+                let line = self.tok.line.copy()
+                self.advance()?
+                self.expect_sym("<")?
+                let k = self.ident("a map key type")?
+                self.expect_sym(",")?
+                let v = self.ident("a map value type")?
+                self.expect_sym(">")?
+                let fname = self.ident("a field name")?
+                self.expect_sym("=")?
+                let n = self.int()?
+                if self.is_sym("[") {
+                    let z = self.field_options()?
+                }
+                self.expect_sym(";")?
+                m.fields.push(Field(fname, n as u32, String.from(""), 1, String.from(""), k, v, -1, line))
+            } else if self.is_word("repeated") {
+                self.advance()?
+                let f = self.parse_field(1, String.from(""))?
+                m.fields.push(f)
+            } else if self.is_word("optional") {
+                self.advance()?
+                let f = self.parse_field(2, String.from(""))?
+                m.fields.push(f)
+            } else if self.is_word("required") {
+                self.advance()?
+                let f = self.parse_field(0, String.from(""))?
+                m.fields.push(f)
+            } else if self.is_word("group") {
+                return Err(perr(self.tok.copy(), "groups are not supported"))
+            } else {
+                let f = self.parse_field(0, String.from(""))?
+                m.fields.push(f)
+            }
+        }
+        self.expect_sym(r"}")?
+        Ok(m)
+    }
+
+    /// Skips a `{ ... }` block.
+    fn skip_block(inout self) -> Result[(), String] {
+        self.expect_sym(r"{")?
+        let mut depth: i32 = 1
+        while depth > 0 {
+            if self.tok.kind == 0 { return Err(perr(self.tok.copy(), "a block that is not closed")) }
+            if self.is_sym(r"{") { depth += 1 }
+            if self.is_sym(r"}") { depth -= 1 }
+            self.advance()?
+        }
+        Ok(())
+    }
+
+    fn parse_service(inout self) -> Result[Service, String] {
+        let name = self.ident("a service name")?
+        self.expect_sym(r"{")?
+        let mut s = Service(name, List.new())
+        while !self.is_sym(r"}") {
+            if self.tok.kind == 0 { return Err(perr(self.tok.copy(), "a service that is not closed")) }
+            if self.is_sym(";") {
+                self.advance()?
+            } else if self.is_word("option") {
+                self.skip_statement()?
+            } else if self.is_word("rpc") {
+                self.advance()?
+                let rn = self.ident("an rpc name")?
+                self.expect_sym("(")?
+                let mut cs = false
+                if self.is_word("stream") {
+                    cs = true
+                    self.advance()?
+                }
+                let input = self.ident("a request type")?
+                self.expect_sym(")")?
+                if !self.is_word("returns") { return Err(perr(self.tok.copy(), "expected `returns`")) }
+                self.advance()?
+                self.expect_sym("(")?
+                let mut ss = false
+                if self.is_word("stream") {
+                    ss = true
+                    self.advance()?
+                }
+                let output = self.ident("a response type")?
+                self.expect_sym(")")?
+                if self.is_sym(r"{") {
+                    self.skip_block()?
+                    if self.is_sym(";") { self.advance()? }
+                } else {
+                    self.expect_sym(";")?
+                }
+                s.rpcs.push(Rpc(rn, input, output, cs, ss))
+            } else {
+                return Err(perr(self.tok.copy(), "expected `rpc`"))
+            }
+        }
+        self.expect_sym(r"}")?
+        Ok(s)
+    }
+}
+
+/// Parses the text of the file `path`.
+pub fn parse(path: String, src: List[u8]) -> Result[File, String] {
+    let mut p = P(Lexer(src, 0, 1, 1), Tok(0, String.from(""), 1, 1, 0), None)
+    p.advance()?
+    let mut f = File(path, String.from("proto2"), String.from(""), List.new(), List.new(), List.new(), List.new(), List.new())
+    while p.tok.kind != 0 {
+        if p.is_sym(";") {
+            p.advance()?
+        } else if p.is_word("syntax") {
+            p.advance()?
+            p.expect_sym("=")?
+            f.syntax = p.string()?
+            p.expect_sym(";")?
+        } else if p.is_word("package") {
+            p.advance()?
+            f.package = p.ident("a package name")?
+            p.expect_sym(";")?
+        } else if p.is_word("import") {
+            p.advance()?
+            let mut public = false
+            if p.is_word("public") {
+                public = true
+                p.advance()?
+            } else if p.is_word("weak") {
+                p.advance()?
+            }
+            let s = p.string()?
+            p.expect_sym(";")?
+            f.imports.push(s.copy())
+            if public { f.public_imports.push(s) }
+        } else if p.is_word("option") {
+            p.skip_statement()?
+        } else if p.is_word("message") {
+            p.advance()?
+            let m = p.parse_message()?
+            f.messages.push(m)
+        } else if p.is_word("enum") {
+            p.advance()?
+            let e = p.parse_enum()?
+            f.enums.push(e)
+        } else if p.is_word("service") {
+            p.advance()?
+            let s = p.parse_service()?
+            f.services.push(s)
+        } else if p.is_word("extend") {
+            p.advance()?
+            let z = p.ident("a type name")?
+            p.skip_block()?
+        } else {
+            return Err(perr(p.tok.copy(), "expected a declaration"))
+        }
+    }
+    Ok(f)
+}

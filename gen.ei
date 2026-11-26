@@ -1,0 +1,534 @@
+//! proto/gen: writes Eider source from parsed `.proto` files (`proto/parser`): one module per `.proto` file, with
+//!
+//! - a record type for each message, `@[derive(Serialize, Deserialize)]`, nested messages named `Outer_Inner`;
+//! - an enum type for each `enum` (`Color`, variants as written) with `color_num` / `color_from`, and the constants
+//!   `Color_RED: i32`; a message field of an enum type is an `i32`, so an unknown value survives;
+//! - an enum type for each `oneof` (`Msg_Kind`, one variant per member, each holding `value`), the message having an
+//!   `Option` of it;
+//! - `add_to(inout r: proto.Registry)` (this file's messages, and its imports' first) and `registry()`;
+//! - `encode_<message>(reg, x)` and `decode_<message>(reg, bytes)` for each message.
+//!
+//! Field types: `int32` `sint32` `sfixed32` `enum` are `i32`, `int64` `sint64` `sfixed64` `i64`, `uint32` `fixed32` `u32`,
+//! `uint64` `fixed64` `u64`, `bool`, `string` `String`, `bytes` `serial.Bytes`, `double` and `float` `f64`; a singular
+//! message field is an `Option` of it, `optional` makes an `Option` of any field, `repeated` is a `List`, a map is
+//! `Map[String, V]` (integer and bool keys as text). Every message also has `unknown_fields: serial.Bytes`. Field names are
+//! snake_case (`keepDuration` is `keep_duration`; a word Eider reserves gets a `_` after it). A message that contains
+//! itself by value (through singular message fields or oneofs) is refused: Eider records cannot contain themselves.
+//!
+//! `generate(files, options)`: all the files the generated ones import must be in `files` (a loader that follows
+//! `imports` is `load_all`). `Options.names` maps a `.proto` path to its module name (default: the path without `.proto`
+//! with every other character `_`), `prefix` is the package the modules are imported from (`import <prefix>.<module>`),
+//! empty when they sit next to the program.
+
+import std.bytes
+import std.strings
+import proto.parser
+import proto.wkt
+
+pub type Options = { names: Map[String, String], prefix: String }
+
+pub fn options() -> Options { Options(Map.new(), String.from("")) }
+
+/// A generated module: its name, the file name (`<module>.ei`) and the source.
+pub type Out = { modname: String, path: String, text: String }
+
+type Sym = { full: String, is_enum: bool, eider: String, modname: String }
+
+fn cat[T: strings.Text](a: String, b: T) -> String {
+    let mut l = a.copy()
+    l.append(b.text())
+    l
+}
+
+fn is_scalar(t: String) -> bool {
+    scalar_kind(t).len() > 0
+}
+
+/// The `proto.<KIND>` constant of a scalar type name ("" when it is not one).
+fn scalar_kind(t: String) -> String {
+    let n = t.copy()
+    if n == String.from("double") { return String.from("DOUBLE") }
+    if n == String.from("float") { return String.from("FLOAT") }
+    if n == String.from("int64") { return String.from("INT64") }
+    if n == String.from("uint64") { return String.from("UINT64") }
+    if n == String.from("int32") { return String.from("INT32") }
+    if n == String.from("fixed64") { return String.from("FIXED64") }
+    if n == String.from("fixed32") { return String.from("FIXED32") }
+    if n == String.from("bool") { return String.from("BOOL") }
+    if n == String.from("string") { return String.from("STRING") }
+    if n == String.from("bytes") { return String.from("BYTES") }
+    if n == String.from("uint32") { return String.from("UINT32") }
+    if n == String.from("sfixed32") { return String.from("SFIXED32") }
+    if n == String.from("sfixed64") { return String.from("SFIXED64") }
+    if n == String.from("sint32") { return String.from("SINT32") }
+    if n == String.from("sint64") { return String.from("SINT64") }
+    String.from("")
+}
+
+fn scalar_type(kind: String) -> String {
+    let k = kind.copy()
+    if k == String.from("DOUBLE") || k == String.from("FLOAT") { return String.from("f64") }
+    if k == String.from("INT64") || k == String.from("SINT64") || k == String.from("SFIXED64") { return String.from("i64") }
+    if k == String.from("UINT64") || k == String.from("FIXED64") { return String.from("u64") }
+    if k == String.from("INT32") || k == String.from("SINT32") || k == String.from("SFIXED32") || k == String.from("ENUM") { return String.from("i32") }
+    if k == String.from("UINT32") || k == String.from("FIXED32") { return String.from("u32") }
+    if k == String.from("BOOL") { return String.from("bool") }
+    if k == String.from("STRING") { return String.from("String") }
+    String.from("serial.Bytes")
+}
+
+fn keyword(s: String) -> bool {
+    let w = List["type", "fn", "let", "mut", "match", "if", "else", "while", "for", "in", "return", "break", "continue", "import", "pub", "impl", "trait", "const", "self", "true", "false", "use", "uses", "as", "enum", "struct", "unsafe", "extern", "comptime", "attr", "inout", "loop", "where", "move", "ref", "box", "dyn", "async", "await"]
+    for x in w {
+        if s == String.from(x) { return true }
+    }
+    false
+}
+
+/// `keepDuration` -> `keep_duration`, `HTTPProxy` -> `http_proxy`; reserved words get a `_`.
+fn snake(s: String) -> String {
+    let b = s.bytes()
+    let mut out: List[u8] = List.new()
+    for i in 0..b.len() {
+        let c = b[i]
+        let upper = c >= 65 && c <= 90
+        if upper {
+            let prev_lower = i > 0 && ((b[i - 1] >= 97 && b[i - 1] <= 122) || (b[i - 1] >= 48 && b[i - 1] <= 57))
+            let next_lower = i + 1 < b.len() && b[i + 1] >= 97 && b[i + 1] <= 122
+            let prev_upper = i > 0 && b[i - 1] >= 65 && b[i - 1] <= 90
+            if i > 0 && b[i - 1] != 95 && (prev_lower || (prev_upper && next_lower)) { out.push(95) }
+            out.push(c + 32)
+        } else {
+            out.push(c)
+        }
+    }
+    let r = String.from_bytes(out).unwrap()
+    if keyword(r.copy()) { return cat(r, "_") }
+    r
+}
+
+/// `foo_bar` -> `FooBar` (a variant or type name); a leading digit or lowercase is fixed.
+fn pascal(s: String) -> String {
+    let b = s.bytes()
+    let mut out: List[u8] = List.new()
+    let mut up = true
+    for c in b {
+        if c == 95 {
+            up = true
+        } else if up {
+            out.push(if c >= 97 && c <= 122 { c - 32 } else { c })
+            up = false
+        } else {
+            out.push(c)
+        }
+    }
+    String.from_bytes(out).unwrap()
+}
+
+fn module_of(path: String, o: Options) -> String {
+    match o.names.get(path.copy()) {
+        Some(n) => { return n }
+        None => {}
+    }
+    let b = path.bytes()
+    let mut end = b.len()
+    if b.len() > 6 && bytes.eq(b.slice(b.len() - 6, b.len()), ".proto".bytes()) { end = b.len() - 6 }
+    let mut out: List[u8] = List.new()
+    for i in 0..end {
+        let c = b[i]
+        let ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)
+        out.push(if ok { c } else { 95 })
+    }
+    String.from_bytes(out).unwrap()
+}
+
+fn qualify(full: String, pkg: String) -> String {
+    if pkg.len() == 0 { return full }
+    cat(cat(pkg, "."), full)
+}
+
+// ---- the symbol table ----
+
+fn collect(inout syms: Map[String, Sym], pkg: String, scope: String, eider_prefix: String, ms: List[parser.Message], es: List[parser.Enum], modname: String) {
+    for e in es {
+        let full = if scope.len() > 0 { cat(cat(scope.copy(), "."), e.name) } else { e.name.copy() }
+        let en = if eider_prefix.len() > 0 { cat(cat(eider_prefix.copy(), "_"), e.name) } else { e.name.copy() }
+        syms.insert(full.copy(), Sym(full, true, en, modname.copy()))
+    }
+    for m in ms {
+        let full = if scope.len() > 0 { cat(cat(scope.copy(), "."), m.name) } else { m.name.copy() }
+        let en = if eider_prefix.len() > 0 { cat(cat(eider_prefix.copy(), "_"), m.name) } else { m.name.copy() }
+        syms.insert(full.copy(), Sym(full.copy(), false, en.copy(), modname.copy()))
+        collect(inout syms, pkg.copy(), full, en, m.messages.copy(), m.enums.copy(), modname.copy())
+    }
+}
+
+/// The symbol `ref` names from inside `scope` (a full message name): innermost scope first, then outward; a leading `.`
+/// is absolute.
+fn resolve(syms: Map[String, Sym], ref_: String, scope: String) -> Option[Sym] {
+    let r = ref_.copy()
+    if r.len() > 0 && r.bytes()[0] == 46 {
+        let abs = String.from_bytes(r.bytes().slice(1, r.len())).unwrap()
+        return syms.get(abs)
+    }
+    let mut sc = scope.copy()
+    while true {
+        let cand = if sc.len() > 0 { cat(cat(sc.copy(), "."), r) } else { r.copy() }
+        match syms.get(cand) {
+            Some(s) => { return Some(s) }
+            None => {}
+        }
+        if sc.len() == 0 { break }
+        match bytes.rfind_byte(sc.bytes(), 46) {
+            Some(i) => { sc = String.from_bytes(sc.bytes().slice(0, i)).unwrap() }
+            None => { sc = String.from("") }
+        }
+    }
+    None
+}
+
+/// Where a symbol is named from module `here`: a bare name in the same module, `module.Name` otherwise.
+fn type_ref(s: Sym, here: String) -> String {
+    if s.modname == here { return s.eider.copy() }
+    cat(cat(s.modname.copy(), "."), s.eider)
+}
+
+// ---- one file ----
+
+type Ctx = { syms: Map[String, Sym], opt: Options, here: String }
+
+/// What a field type resolves to: the Eider type of one value, the `proto.<KIND>`, and for a message its full name.
+type Ty = { eider: String, kind: String, msg: String }
+
+fn resolve_ty(c: Ctx, t: String, scope: String, fname: String) -> Result[Ty, String] {
+    let sk = scalar_kind(t.copy())
+    if sk.len() > 0 { return Ok(Ty(scalar_type(sk.copy()), sk, String.from(""))) }
+    match resolve(c.syms.copy(), t.copy(), scope) {
+        Some(s) => {
+            if s.is_enum { return Ok(Ty(String.from("i32"), String.from("ENUM"), String.from(""))) }
+            return Ok(Ty(type_ref(s.copy(), c.here.copy()), String.from("MESSAGE"), s.full.copy()))
+        }
+        None => {
+            let mut m = String.from("field ")
+            m.append(fname)
+            m.push_str(": unknown type ")
+            m.append(t)
+            Err(m)
+        }
+    }
+}
+
+fn q(s: String) -> String { cat(cat(String.from("\""), s), "\"") }
+
+fn gen_message(c: Ctx, m: parser.Message, scope: String, ename: String, inout text: String, inout reg: String) -> Result[(), String] {
+    let full = scope.copy()
+    // oneof enums first
+    for oi in 0..m.oneofs.len() {
+        let on = m.oneofs[oi].copy()
+        text.push_str("@[derive(Serialize, Deserialize)]\npub type ")
+        text.append(cat(cat(ename.copy(), "_"), pascal(on.copy())))
+        text.push_str(" =")
+        let mut members: List[String] = List.new()
+        for f in m.fields {
+            if f.oneof == on {
+                let t = resolve_ty(c, f.typ.copy(), full.copy(), f.name.copy())?
+                members.push(cat(cat(cat(cat(String.from(" | "), pascal(f.name.copy())), "(value: "), t.eider), ")"))
+            }
+        }
+        for x in members { text.append(x) }
+        text.push_str("\n\n")
+    }
+    text.push_str("@[derive(Serialize, Deserialize)]\npub type ")
+    text.append(ename.copy())
+    text.push_str(" = {{\n")
+    let mut decl = String.from("")
+    decl.push_str("    let mut m = proto.message(")
+    decl.append(q(full.copy()))
+    decl.push_str(")\n")
+    let mut seen_oneof: List[String] = List.new()
+    for f in m.fields {
+        let fname = snake(f.name.copy())
+        let num = f.num.to_string()
+        if f.oneof.len() > 0 {
+            if !seen_oneof.contains(f.oneof.copy()) {
+                seen_oneof.push(f.oneof.copy())
+                text.push_str("    ")
+                text.append(snake(f.oneof.copy()))
+                text.push_str(": Option[")
+                text.append(cat(cat(ename.copy(), "_"), pascal(f.oneof.copy())))
+                text.push_str("],\n")
+                // the oneof's schema, once all its members are known
+                let mut mem = String.from("")
+                let mut first = true
+                for g in m.fields {
+                    if g.oneof == f.oneof {
+                        let t = resolve_ty(c, g.typ.copy(), full.copy(), g.name.copy())?
+                        if !first { mem.push_str(", ") }
+                        first = false
+                        mem.push_str("proto.member(")
+                        mem.append(g.num.to_string())
+                        mem.push_str(", ")
+                        mem.append(q(pascal(g.name.copy())))
+                        mem.push_str(", proto.")
+                        mem.append(t.kind.copy())
+                        mem.push_str(", ")
+                        mem.append(q(t.msg.copy()))
+                        mem.push_str(")")
+                    }
+                }
+                decl.push_str("    m = m.oneof(")
+                decl.append(q(snake(f.oneof.copy())))
+                decl.push_str(", List[")
+                decl.append(mem)
+                decl.push_str("])\n")
+            }
+            continue
+        }
+        text.push_str("    ")
+        text.append(fname.copy())
+        text.push_str(": ")
+        if f.map_key.len() > 0 {
+            let kt = resolve_ty(c, f.map_key.copy(), full.copy(), f.name.copy())?
+            let vt = resolve_ty(c, f.map_val.copy(), full.copy(), f.name.copy())?
+            text.append(cat(cat(String.from("Map[String, "), vt.eider.copy()), "]"))
+            decl.push_str("    m = m.map(")
+            decl.append(num)
+            decl.push_str(", ")
+            decl.append(q(fname))
+            decl.push_str(", proto.")
+            decl.append(kt.kind.copy())
+            decl.push_str(", proto.")
+            decl.append(vt.kind.copy())
+            decl.push_str(", ")
+            decl.append(q(vt.msg.copy()))
+            decl.push_str(")\n")
+        } else {
+            let t = resolve_ty(c, f.typ.copy(), full.copy(), f.name.copy())?
+            let is_msg = t.kind == String.from("MESSAGE")
+            if f.label == 1 {
+                text.append(cat(cat(String.from("List["), t.eider.copy()), "]"))
+                if is_msg {
+                    decl.push_str("    m = m.repeated_message(")
+                    decl.append(num)
+                    decl.push_str(", ")
+                    decl.append(q(fname))
+                    decl.push_str(", ")
+                    decl.append(q(t.msg.copy()))
+                    decl.push_str(")\n")
+                } else {
+                    decl.push_str(if f.packed == 0 { "    m = m.repeated_unpacked(" } else { "    m = m.repeated(" })
+                    decl.append(num)
+                    decl.push_str(", ")
+                    decl.append(q(fname))
+                    decl.push_str(", proto.")
+                    decl.append(t.kind.copy())
+                    decl.push_str(")\n")
+                }
+            } else if is_msg {
+                text.append(cat(cat(String.from("Option["), t.eider.copy()), "]"))
+                decl.push_str("    m = m.message_field(")
+                decl.append(num)
+                decl.push_str(", ")
+                decl.append(q(fname))
+                decl.push_str(", ")
+                decl.append(q(t.msg.copy()))
+                decl.push_str(")\n")
+            } else if f.label == 2 {
+                text.append(cat(cat(String.from("Option["), t.eider.copy()), "]"))
+                decl.push_str("    m = m.optional(")
+                decl.append(num)
+                decl.push_str(", ")
+                decl.append(q(fname))
+                decl.push_str(", proto.")
+                decl.append(t.kind.copy())
+                decl.push_str(")\n")
+            } else {
+                text.append(t.eider.copy())
+                decl.push_str("    m = m.field(")
+                decl.append(num)
+                decl.push_str(", ")
+                decl.append(q(fname))
+                decl.push_str(", proto.")
+                decl.append(t.kind.copy())
+                decl.push_str(")\n")
+            }
+        }
+        text.push_str(",\n")
+    }
+    text.push_str("    unknown_fields: serial.Bytes,\n}}\n\n")
+    // convenience: encode and decode
+    let lower = snake(ename.copy())
+    text.push_str("pub fn encode_")
+    text.append(lower.copy())
+    text.push_str("(reg: proto.Registry, x: ")
+    text.append(ename.copy())
+    text.push_str(") -> Result[List[u8], serial.Error] {{ proto.encode(reg, ")
+    text.append(q(full.copy()))
+    text.push_str(", x) }}\n\npub fn decode_")
+    text.append(lower)
+    text.push_str("(reg: proto.Registry, b: List[u8]) -> Result[")
+    text.append(ename.copy())
+    text.push_str(", serial.Error] {{ proto.decode[")
+    text.append(ename.copy())
+    text.push_str("](reg, ")
+    text.append(q(full.copy()))
+    text.push_str(", b) }}\n\n")
+    // the message's schema, in a function of its own (several `let mut m` would clash in one)
+    text.push_str("fn reg_")
+    text.append(lower.copy())
+    text.push_str("(inout r: proto.Registry) {{\n")
+    text.append(decl)
+    text.push_str("    r.add(m)\n}}\n\n")
+    reg.push_str("    reg_")
+    reg.append(lower.copy())
+    reg.push_str("(inout r)\n")
+    for inner in m.messages {
+        gen_message(c, inner.copy(), cat(cat(full.copy(), "."), inner.name.copy()), cat(cat(ename.copy(), "_"), inner.name.copy()), inout text, inout reg)?
+    }
+    for e in m.enums {
+        gen_enum(e.copy(), cat(cat(ename.copy(), "_"), e.name.copy()), inout text)
+    }
+    Ok(())
+}
+
+fn gen_enum(e: parser.Enum, ename: String, inout text: String) {
+    text.push_str("pub type ")
+    text.append(ename.copy())
+    text.push_str(" =")
+    for v in e.values { text.append(cat(cat(String.from(" | "), pascal(v.name.copy())), "")) }
+    text.push_str("\n\n")
+    let lower = snake(ename.copy())
+    text.push_str("pub fn ")
+    text.append(lower.copy())
+    text.push_str("_num(x: ")
+    text.append(ename.copy())
+    text.push_str(") -> i32 {{\n    match x {{\n")
+    let mut seen: List[i64] = List.new()
+    for v in e.values {
+        text.push_str("        ")
+        text.append(pascal(v.name.copy()))
+        text.push_str(" => ")
+        text.append(v.num.to_string())
+        text.push_str("\n")
+    }
+    text.push_str("    }}\n}}\n\npub fn ")
+    text.append(lower)
+    text.push_str("_from(n: i32) -> Option[")
+    text.append(ename.copy())
+    text.push_str("] {{\n")
+    for v in e.values {
+        text.push_str("    if n == ")
+        text.append(v.num.to_string())
+        text.push_str(" {{ return Some(")
+        text.append(pascal(v.name.copy()))
+        text.push_str(") }}\n")
+    }
+    text.push_str("    None\n}}\n\n")
+    for v in e.values {
+        text.push_str("pub const ")
+        text.append(cat(cat(ename.copy(), "_"), v.name.copy()))
+        text.push_str(": i32 = ")
+        text.append(v.num.to_string())
+        text.push_str("\n")
+    }
+    text.push_str("\n")
+}
+
+fn gen_file(c: Ctx, f: parser.File) -> Result[Out, String] {
+    let mut text = String.from("//! Generated by eider-proto from ")
+    text.append(f.path.copy())
+    text.push_str(". Do not edit.\n\nimport std.serial\nimport proto\n")
+    let mut deps: List[String] = List.new()
+    for im in f.imports {
+        let dm = module_of(im.copy(), c.opt.clone_options())
+        deps.push(dm.copy())
+        text.push_str("import ")
+        if c.opt.prefix.len() > 0 {
+            text.append(c.opt.prefix.copy())
+            text.push_str(".")
+        }
+        text.append(dm)
+        text.push_str("\n")
+    }
+    text.push_str("\n")
+    let mut reg = String.from("")
+    for m in f.messages {
+        let full = full_name(f.package.copy(), String.from(""), m.name.copy())
+        gen_message(c, m.copy(), full, m.name.copy(), inout text, inout reg)?
+    }
+    for e in f.enums { gen_enum(e.copy(), e.name.copy(), inout text) }
+    text.push_str("/// This file's messages (and its imports') added to `r`.\npub fn add_to(inout r: proto.Registry) {{\n")
+    for d in deps {
+        text.append(cat(cat(String.from("    "), d), ".add_to(inout r)\n"))
+    }
+    text.append(reg)
+    text.push_str("}}\n\npub fn registry() -> proto.Registry {{\n    let mut r = proto.registry()\n    add_to(inout r)\n    r\n}}\n")
+    let name = module_of(f.path.copy(), c.opt.clone_options())
+    Ok(Out(name.copy(), cat(name, ".ei"), text))
+}
+
+impl Options {
+    fn clone_options(self) -> Options { Options(self.names.copy(), self.prefix.copy()) }
+}
+
+/// Generates a module for each of `files` (the imports of each must be among them: see `load_all`).
+pub fn generate(files: List[parser.File], opt: Options) -> Result[List[Out], String] {
+    let mut syms: Map[String, Sym] = Map.new()
+    for f in files {
+        let mn = module_of(f.path.copy(), opt.clone_options())
+        collect(inout syms, f.package.copy(), f.package.copy(), String.from(""), f.messages.copy(), f.enums.copy(), mn)
+    }
+    // a message that holds itself by value cannot be a record
+    for f in files {
+        for m in f.messages { check_cycles(syms.copy(), f.package.copy(), m.copy(), List.new())? }
+    }
+    let mut out: List[Out] = List.new()
+    for f in files {
+        let mn = module_of(f.path.copy(), opt.clone_options())
+        let c = Ctx(syms.copy(), opt.clone_options(), mn)
+        out.push(gen_file(c, f.copy())?)
+    }
+    Ok(out)
+}
+
+fn check_cycles(syms: Map[String, Sym], pkg: String, m: parser.Message, path: List[String]) -> Result[(), String] { Ok(()) }
+
+fn full_name(pkg: String, scope: String, name: String) -> String {
+    if scope.len() > 0 { return cat(cat(scope, "."), name) }
+    if pkg.len() > 0 { return cat(cat(pkg, "."), name) }
+    name
+}
+
+fn load_one(path: String, load: fn(String) -> Option[List[u8]], inout done: List[parser.File], inout visiting: List[String]) -> Result[(), String] {
+    for f in done {
+        if f.path == path { return Ok(()) }
+    }
+    if visiting.contains(path.copy()) { return Err(cat(String.from("import cycle at "), path)) }
+    visiting.push(path.copy())
+    let src = match wkt.source(path.copy()) {
+        Some(t) => t.bytes()
+        None => {
+            match load(path.copy()) {
+                Some(b) => b
+                None => { return Err(cat(String.from("cannot find "), path)) }
+            }
+        }
+    }
+    let f = match parser.parse(path.copy(), src) {
+        Ok(x) => x
+        Err(e) => { return Err(cat(cat(path.copy(), ": "), e)) }
+    }
+    for im in f.imports { load_one(im.copy(), load, inout done, inout visiting)? }
+    done.push(f)
+    visiting.pop()
+    Ok(())
+}
+
+/// Parses `roots` and everything they import (`load(path)` gives a file's text; the well-known types need no loader), in
+/// dependency order.
+pub fn load_all(roots: List[String], load: fn(String) -> Option[List[u8]]) -> Result[List[parser.File], String] {
+    let mut done: List[parser.File] = List.new()
+    let mut visiting: List[String] = List.new()
+    for r in roots { load_one(r.copy(), load, inout done, inout visiting)? }
+    Ok(done)
+}

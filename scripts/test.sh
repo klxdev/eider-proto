@@ -39,5 +39,7 @@ if [ -n "$TSAN" ]; then
     echo "skip tsan runs ($TSAN): ${CC:-cc} cannot build a -fsanitize=thread program"
   fi
 fi
+# the reference implementation reads what Eider writes (needs python3 with protobuf and grpcio-tools; `skip` without)
+sh tests/golden.sh || fail=1
 [ $fail = 0 ] && echo "ALL OK"
 exit $fail

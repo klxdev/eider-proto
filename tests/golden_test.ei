@@ -1,0 +1,83 @@
+// The wire format against golden bytes made by the reference implementation (Google's protobuf for Python, from
+// tests/golden/make_golden.py): 498 random instances of the BuildKit control, ops, policy, worker and status messages
+// (every field kind, nested messages, repeated, packed, maps, oneofs, and unknown fields of every wire type).
+// Each one is decoded with the schema generated from the .proto files (tests/buildkit/), encoded again and decoded
+// again: the two decodings must be equal, and the encoding must not lose bytes (it is as long as the original unless a
+// map was reordered or a default-valued field was written, which proto3 omits).
+//
+// With the argument `emit` it prints `<message> <hex>` for each re-encoding instead, for `tests/golden.sh`, which has
+// the reference parser read them and compare them with the originals.
+
+import std.bytes
+import std.env
+import std.encoding
+import std.fs
+import std.io
+import std.serial
+import proto
+import proto.tests.buildkit.api_services_control_control
+
+fn unhex(s: List[u8]) -> List[u8] {
+    let mut out: List[u8] = List.new()
+    let mut hi: i32 = -1
+    for c in s {
+        let v: i32 = if c >= 48 && c <= 57 { (c as i32) - 48 } else if c >= 97 && c <= 102 { (c as i32) - 87 } else { -1 }
+        if v < 0 { continue }
+        if hi < 0 { hi = v } else {
+            out.push((hi * 16 + v) as u8)
+            hi = -1
+        }
+    }
+    out
+}
+
+fn main() uses io, fs {
+    let emit = env.args().len() > 1
+    let reg = api_services_control_control.registry()
+    let text = fs.read("tests/golden/python.txt".bytes()).unwrap()
+    let mut n = 0
+    let mut bad = 0
+    let mut shrunk = 0
+    for line in bytes.lines(text) {
+        let parts = bytes.split(line, 32)
+        if parts.len() != 2 { continue }
+        let name = String.from_bytes(parts[0].copy()).unwrap()
+        let wire = if bytes.eq(parts[1], "-".bytes()) { List.new() } else { unhex(parts[1].copy()) }
+        n += 1
+        let v1 = match proto.decode_value(reg, name.text(), wire.copy()) {
+            Ok(v) => v
+            Err(e) => {
+                bad += 1
+                io.outln(serial.error_text(e))
+                continue
+            }
+        }
+        let again = match proto.encode_value(reg, name.text(), v1.copy()) {
+            Ok(b) => b
+            Err(e) => {
+                bad += 1
+                io.outln(serial.error_text(e))
+                continue
+            }
+        }
+        if emit {
+            let mut l = name.copy()
+            l.push_str(" ")
+            l.append(if again.len() == 0 { String.from("-") } else { encoding.hex(again.copy()) })
+            io.outln(l.bytes())
+            continue
+        }
+        let v2 = proto.decode_value(reg, name.text(), again.copy()).unwrap()
+        if v1 != v2 { bad += 1 }
+        if again.len() < wire.len() { shrunk += 1 }
+    }
+    if !emit {
+        let mut l = String.from("messages: ")
+        l.append(n.to_string())
+        l.push_str(", decode/encode/decode differences: ")
+        l.append(bad.to_string())
+        l.push_str(", re-encodings shorter than the original: ")
+        l.append(shrunk.to_string())
+        io.outln(l.bytes())
+    }
+}
