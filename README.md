@@ -11,6 +11,6 @@ How proto3 maps to Eider types is in the header of `proto.ei` and `gen.ei` (enum
 
 ## Tests
 
-`tests/proto_test` (wire primitives, every field kind, merging, unknown fields, malformed input), `tests/parser_test`, `tests/buildkit_test` (types generated from BuildKit's `control.proto` and what it imports, in `tests/buildkit/`), and **`tests/golden_test`**: 498 random instances of BuildKit's control, ops, policy, worker and status messages written by Google's protobuf for Python (`tests/golden/python.txt`) decode and re-encode without losing a byte; `tests/golden.sh` has the reference parser read what Eider wrote and compare it with the originals (498 of 498 equal).
+`tests/proto_test` (wire primitives, every field kind, merging, unknown fields, malformed input), `tests/parser_test`, `tests/session_test` (the session services: filesync, auth, secrets, sshforward, upload, exporter and fsutil's wire types), `tests/buildkit_test` (types generated from BuildKit's `control.proto` and what it imports, in `tests/buildkit/`), and **`tests/golden_test`**: 498 random instances of BuildKit's control, ops, policy, worker and status messages written by Google's protobuf for Python (`tests/golden/python.txt`) decode and re-encode without losing a byte; `tests/golden.sh` has the reference parser read what Eider wrote and compare it with the originals (498 of 498 equal).
 
 Used by (planned): eider-rpc (gRPC).

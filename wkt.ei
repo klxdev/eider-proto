@@ -4,6 +4,8 @@
 
 /// The text of the well-known file `path` (`google/protobuf/timestamp.proto`), None for any other path.
 pub fn source(path: String) -> Option[String] {
+    // descriptor.proto only matters to files that define options (`extend google.protobuf.FieldOptions`), which are skipped
+    if path == String.from("google/protobuf/descriptor.proto") { return Some(String.from("syntax = \"proto2\";\npackage google.protobuf;\n")) }
     if path == String.from("google/protobuf/any.proto") { return Some(String.from("syntax = \"proto3\";\npackage google.protobuf;\nmessage Any {{ string type_url = 1; bytes value = 2; }}\n")) }
     if path == String.from("google/protobuf/timestamp.proto") { return Some(String.from("syntax = \"proto3\";\npackage google.protobuf;\nmessage Timestamp {{ int64 seconds = 1; int32 nanos = 2; }}\n")) }
     if path == String.from("google/protobuf/duration.proto") { return Some(String.from("syntax = \"proto3\";\npackage google.protobuf;\nmessage Duration {{ int64 seconds = 1; int32 nanos = 2; }}\n")) }
