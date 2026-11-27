@@ -1,0 +1,17 @@
+syntax = "proto3";
+package tree;
+
+// Messages that contain themselves: directly, through a oneof, and through two messages.
+message Node {
+  string name = 1;
+  Node next = 2;
+  repeated Node children = 3;
+  oneof body {
+    int64 number = 4;
+    Node inner = 5;
+  }
+  Left left = 6;
+}
+
+message Left { string tag = 1; Right right = 2; }
+message Right { string tag = 1; Left left = 2; }

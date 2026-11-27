@@ -1,7 +1,8 @@
-// A message that contains itself by value (directly, through a field, through a oneof, or through another message) is refused by the
-// generator with the cycle named; one that holds itself in a repeated field or a map is fine (those are on the heap).
+// A message that contains itself by value (directly, through a field, through a oneof, or through another message) is generated with a
+// Box at the field that closes the cycle; one that holds itself in a repeated field or a map needs none (those are on the heap).
 
 import std.io
+import std.strings
 import proto.parser
 import proto.gen
 
@@ -20,7 +21,18 @@ fn main() uses io {
         match parser.parse(String.from("c.proto"), src.bytes()) {
             Ok(f) => {
                 match gen.generate(List[f], gen.options()) {
-                    Ok(o) => { say(String.from("generated")) }
+                    Ok(o) => {
+                        let mut n = 0
+                        for m in o {
+                            for line in strings.lines(m.text.copy()) {
+                                if strings.contains(line.copy(), "Box[") {
+                                    say(strings.trim(line))
+                                    n += 1
+                                }
+                            }
+                        }
+                        if n == 0 { say(String.from("generated, no Box")) }
+                    }
                     Err(e) => { say(e) }
                 }
             }

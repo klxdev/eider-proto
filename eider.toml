@@ -1,5 +1,5 @@
 [package]
 name = "proto"
-version = "0.7.0"
+version = "0.7.1"
 eider = "0.7"
 description = "Protocol Buffers (proto3): the wire format as a std/serial format, a .proto parser, and a generator that writes Eider types"

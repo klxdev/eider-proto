@@ -13,7 +13,9 @@
 //! message field is an `Option` of it, `optional` makes an `Option` of any field, `repeated` is a `List`, a map is
 //! `Map[String, V]` (integer and bool keys as text). Every message also has `unknown_fields: serial.Bytes`. Field names are
 //! snake_case (`keepDuration` is `keep_duration`; a word Eider reserves gets a `_` after it). A message that contains
-//! itself by value (through singular message fields or oneofs) is refused: Eider records cannot contain themselves.
+//! itself by value (through singular message fields or oneofs, directly or through other messages) is a record too: the field that
+//! closes the cycle is a `Box` (`Option[Box[Node]]`, a oneof member `Box[Node]`), which `std/serial` (Eider 0.7.11) writes as its
+//! contents; repeated fields and maps are on the heap already. Decoding stops at `Limits.max_depth` levels.
 //!
 //! `generate(files, options)`: all the files the generated ones import must be in `files` (a loader that follows
 //! `imports` is `load_all`). `Options.names` maps a `.proto` path to its module name (default: the path without `.proto`
@@ -197,7 +199,9 @@ fn type_ref(s: Sym, here: String) -> String {
 
 // ---- one file ----
 
-type Ctx = { syms: Map[String, Sym], opt: Options, here: String }
+/// `boxed`: the `<message full name>#<field name>` of each field that closes a cycle of messages held by value; it is a `Box` (a message
+/// that contains itself cannot be a record otherwise).
+type Ctx = { syms: Map[String, Sym], opt: Options, here: String, boxed: List[String] }
 
 /// What a field type resolves to: the Eider type of one value, the `proto.<KIND>`, and for a message its full name.
 type Ty = { eider: String, kind: String, msg: String }
@@ -246,7 +250,8 @@ fn gen_message(c: Ctx, m: parser.Message, scope: String, ename: String, inout te
         for f in m.fields {
             if f.oneof == on {
                 let t = resolve_ty(c, f.typ.copy(), full.copy(), f.name.copy())?
-                members.push(cat(cat(cat(cat(String.from(" | "), vname(c, f.name.copy())), "(value: "), t.eider), ")"))
+                let et = if c.boxed.contains(cat(cat(full.copy(), "#"), f.name.copy())) { cat(cat(String.from("Box["), t.eider.copy()), "]") } else { t.eider.copy() }
+                members.push(cat(cat(cat(cat(String.from(" | "), vname(c, f.name.copy())), "(value: "), et), ")"))
             }
         }
         for x in members { text.append(x) }
@@ -339,7 +344,8 @@ fn gen_message(c: Ctx, m: parser.Message, scope: String, ename: String, inout te
                     decl.push_str(")\n")
                 }
             } else if is_msg {
-                text.append(cat(cat(String.from("Option["), t.eider.copy()), "]"))
+                let et = if c.boxed.contains(cat(cat(full.copy(), "#"), f.name.copy())) { cat(cat(String.from("Box["), t.eider.copy()), "]") } else { t.eider.copy() }
+                text.append(cat(cat(String.from("Option["), et), "]"))
                 decl.push_str("    m = m.message_field(")
                 decl.append(num)
                 decl.push_str(", ")
@@ -529,12 +535,12 @@ pub fn generate(files: List[parser.File], opt: Options) -> Result[List[Out], Str
         let mn = module_of(f.path.copy(), opt.clone_options())
         collect(inout syms, f.package.copy(), f.package.copy(), String.from(""), f.messages.copy(), f.enums.copy(), mn)
     }
-    // a message that holds itself by value cannot be a record
-    check_cycles(syms.copy(), files.copy())?
+    // a message that holds itself by value cannot be a record: the field that closes the cycle is a Box
+    let boxed = find_cycles(syms.copy(), files.copy())
     let mut out: List[Out] = List.new()
     for f in files {
         let mn = module_of(f.path.copy(), opt.clone_options())
-        let c = Ctx(syms.copy(), opt.clone_options(), mn)
+        let c = Ctx(syms.copy(), opt.clone_options(), mn, boxed.copy())
         out.push(gen_file(c, f.copy())?)
     }
     Ok(out)
@@ -550,14 +556,15 @@ fn index_messages(scope: String, ms: List[parser.Message], inout idx: Map[String
     }
 }
 
-/// The messages `m` holds by value: its singular message fields and oneof members (a List, a map or a repeated field holds them on the heap).
-fn value_edges(syms: Map[String, Sym], full: String, m: parser.Message) -> List[String] {
-    let mut out: List[String] = List.new()
+/// The messages `m` holds by value as `(field name, message)`: its singular message fields and oneof members (a List, a map or a
+/// repeated field holds them on the heap).
+fn value_edges(syms: Map[String, Sym], full: String, m: parser.Message) -> List[(String, String)] {
+    let mut out: List[(String, String)] = List.new()
     for f in m.fields {
         if f.map_key.len() > 0 || f.label == 1 || scalar_kind(f.typ.copy()).len() > 0 { continue }
         match resolve(syms.copy(), f.typ.copy(), full.copy()) {
             Some(s) => {
-                if !s.is_enum { out.push(s.full.copy()) }
+                if !s.is_enum { out.push((f.name.copy(), s.full.copy())) }
             }
             None => {}
         }
@@ -565,48 +572,38 @@ fn value_edges(syms: Map[String, Sym], full: String, m: parser.Message) -> List[
     out
 }
 
-fn dfs_cycle(syms: Map[String, Sym], idx: Map[String, parser.Message], name: String, inout stack: List[String], inout done: List[String]) -> Result[(), String] {
-    if done.contains(name.copy()) { return Ok(()) }
-    if stack.contains(name.copy()) {
-        let mut path = String.from("")
-        let mut on = false
-        for x in stack.copy() {
-            if x == name { on = true }
-            if on {
-                path.append(x.copy())
-                path.push_str(" -> ")
-            }
-        }
-        path.append(name.copy())
-        let mut e = String.from("message ")
-        e.append(name.copy())
-        e.push_str(" contains itself by value (")
-        e.append(path)
-        e.push_str("): an Eider record cannot contain itself, and std/serial cannot yet derive Box[T] (eider-lang#249), so recursive messages are not supported yet")
-        return Err(e)
-    }
+/// Depth-first: an edge to a message that is on the stack closes a cycle, and its field is recorded in `boxed`.
+fn dfs_cycle(syms: Map[String, Sym], idx: Map[String, parser.Message], name: String, inout stack: List[String], inout done: List[String], inout boxed: List[String]) {
+    if done.contains(name.copy()) { return }
     match idx.get(name.copy()) {
         Some(m) => {
             stack.push(name.copy())
-            for e in value_edges(syms.copy(), name.copy(), m) { dfs_cycle(syms.copy(), idx.copy(), e, inout stack, inout done)? }
+            for e in value_edges(syms.copy(), name.copy(), m) {
+                let (fname, target) = e
+                if stack.contains(target.copy()) {
+                    boxed.push(cat(cat(name.copy(), "#"), fname))
+                } else {
+                    dfs_cycle(syms.copy(), idx.copy(), target, inout stack, inout done, inout boxed)
+                }
+            }
             stack.pop()
         }
         None => {}
     }
     done.push(name)
-    Ok(())
 }
 
-fn check_cycles(syms: Map[String, Sym], files: List[parser.File]) -> Result[(), String] {
+fn find_cycles(syms: Map[String, Sym], files: List[parser.File]) -> List[String] {
     let mut idx: Map[String, parser.Message] = Map.new()
     let mut order: List[String] = List.new()
     for f in files { index_messages(f.package.copy(), f.messages.copy(), inout idx, inout order) }
     let mut done: List[String] = List.new()
+    let mut boxed: List[String] = List.new()
     for name in order {
         let mut stack: List[String] = List.new()
-        dfs_cycle(syms.copy(), idx.copy(), name, inout stack, inout done)?
+        dfs_cycle(syms.copy(), idx.copy(), name, inout stack, inout done, inout boxed)
     }
-    Ok(())
+    boxed
 }
 
 fn full_name(pkg: String, scope: String, name: String) -> String {
