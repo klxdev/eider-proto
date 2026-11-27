@@ -3,6 +3,10 @@
 eider-proto's versions (semver). Before 1.0 the MAJOR.MINOR is the Eider toolchain's it goes
 with (`eider` in eider.toml), the PATCH its own.
 
+## 0.8.0
+
+For Eider 0.8: the version and the `eider` series move to 0.8 with the toolchain; no source changes.
+
 ## 0.7.1
 
 Recursive messages (eider-proto#1 follow-up; eider-lang#249). Generated modules for them need Eider 0.7.11 (`Serialize` and `Deserialize` for `Box[T]`); the library itself builds on 0.7.10.
